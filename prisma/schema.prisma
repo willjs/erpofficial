@@ -1,0 +1,1718 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum Modulo {
+  CORE
+  RRHH
+  NOMINA
+  TAREAS
+  INVENTARIO
+  INVENTARIOS
+  DOCUMENTOS
+  CONTABILIDAD
+  PRESUPUESTOS
+  TESORERIA
+  CLIENTES
+  PERMISOS
+  REPORTES
+  COMPRAS
+  VENTAS
+  PEDIDOS
+  DESPACHOS
+  TRASPASOS
+}
+
+enum PrioridadRequisicion {
+  NORMAL
+  URGENTE
+  EMERGENCIA
+}
+
+enum EstadoRequisicion {
+  BORRADOR
+  PENDIENTE_APROBACION
+  APROBADA_COMPRA
+  APROBADA
+  RECHAZADA
+  EN_COTIZACION
+  ORDEN_COMPRA_GENERADA
+  CERRADA
+}
+
+enum EstadoRecepcion {
+  PENDIENTE
+  PARCIAL
+  COMPLETA
+}
+
+enum TipoPago {
+  ANTICIPO
+  FACTURA
+  SERVICIO
+  IMPUESTO
+  OTROS
+}
+
+enum MetodoPago {
+  TRANSFERENCIA
+  ACH
+  CHEQUE
+}
+
+enum EstadoPago {
+  PENDIENTE
+  APROBADO
+  RECHAZADO
+  PAGADO
+}
+
+enum EstadoCuentaPagar {
+  PENDIENTE
+  CONTABILIZADA
+  ENVIADA_TESORERIA
+  PAGADA
+}
+
+enum TipoPermisoAcceso {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  ALL
+}
+
+enum EstadoEmpleado {
+  ACTIVO
+  INACTIVO
+  SUSPENDIDO
+  BAJA
+}
+
+enum TipoContrato {
+  INDEFINIDO
+  TEMPORAL
+  PRACTICAS
+  FREELANCE
+  HONORARIOS
+}
+
+enum EstadoNomina {
+  BORRADOR
+  CALCULADA
+  APROBADA
+  PAGADA
+  CANCELADA
+}
+
+enum EstadoTarea {
+  PENDIENTE
+  EN_PROGRESO
+  COMPLETADA
+  CANCELADA
+}
+
+enum PrioridadTarea {
+  BAJA
+  MEDIA
+  ALTA
+  CRITICA
+}
+
+enum EstadoProyecto {
+  PLANIFICADO
+  EN_CURSO
+  COMPLETADO
+  CANCELADO
+}
+
+enum EstadoActivo {
+  DISPONIBLE
+  ASIGNADO
+  EN_REPARACION
+  DADO_BAJA
+}
+
+enum TipoMovimientoActivo {
+  ASIGNACION
+  DEVOLUCION
+  MANTENIMIENTO
+  BAJA
+  TRASPASO
+}
+
+enum EstadoSolicitudPermiso {
+  PENDIENTE
+  APROBADO
+  RECHAZADO
+  CANCELADO
+}
+
+enum EstadoPedido {
+  BORRADOR
+  CONFIRMADO
+  EN_DESPACHO
+  COMPLETADO
+  CANCELADO
+}
+
+enum TipoPedidoItem {
+  PRODUCTO
+  SERVICIO
+}
+
+enum EstadoDespacho {
+  BORRADOR
+  PREPARADO
+  ENVIADO
+  ENTREGADO
+  CANCELADO
+}
+
+enum EstadoVenta {
+  BORRADOR
+  CONFIRMADA
+  CANCELADA
+  ANULADA
+}
+
+enum EstadoTraspaso {
+  BORRADOR
+  EN_TRANSITO
+  COMPLETADO
+  CANCELADO
+}
+
+enum TipoAsiento {
+  INGRESO
+  EGASTO
+  TRASPASO
+  AJUSTE
+  APERTURA
+  CIERRE
+}
+
+enum EstadoAsiento {
+  BORRADOR
+  CONTABILIZADO
+  CANCELADO
+}
+
+enum TipoCuentaBancaria {
+  CORRIENTE
+  AHORROS
+  EFECTIVO
+  INVERSION
+}
+
+enum EstadoMovimientoBancario {
+  PENDIENTE
+  CONCILIADO
+  RECONCILIADO
+  CANCELADO
+}
+
+enum TipoInteraccion {
+  LLAMADA
+  EMAIL
+  REUNION
+  NOTA
+  PROPUESTA
+}
+
+// ============================================================
+// MODULO CORE - Empresa y Estructura
+// ============================================================
+
+enum TipoEmpresa {
+  BASICA
+  COMPLETA
+  PERSONALIZADA
+}
+
+model Empresa {
+  id            String      @id @default(cuid())
+  nombre        String
+  rfc           String?     @unique
+  direccion     String?
+  telefono      String?
+  email         String?
+  logo          String?
+  fechaCreacion DateTime    @default(now())
+  activo        Boolean     @default(true)
+  tipo          TipoEmpresa @default(COMPLETA)
+  modulosActivos String?    // JSON array ej: ["COMPRAS","CONTABILIDAD"]
+  tipoContabilidad String?  // "INTERNA" | "WORD_OFFICE" | "SYSCAR" | "ZEUS" | "OTRO"
+
+  departamentos Departamento[]
+  usuarios      Usuario[]           @relation("EmpresaUsuario")
+  usuariosActivos Usuario[]         @relation("EmpresaActiva")
+  usuariosEmpresa UsuarioEmpresa[]
+  clientes      Cliente[]
+  planCuentas   PlanCuenta[]
+  proyectos     Proyecto[]
+  empleados     Empleado[]
+  activos       Activo[]
+  centrosCostos CentroCostos[]
+  proveedores   Proveedor[]
+  requisiciones Requisicion[]
+  cotizaciones  Cotizacion[]
+  aprobacionesConfig AprobacionConfig[]
+  aprobaciones  Aprobacion[]
+  ordenesCompra OrdenCompra[]
+  recepciones   Recepcion[]
+  cuentasPagar  CuentaPagar[]
+  pagos         Pago[]
+  egresos       Egreso[]
+  notificaciones Notificacion[]
+  plantillasContables PlantillaContable[]
+  tipoContabilidadConfig TipoContabilidad?
+  presupuestos         Presupuesto[]
+  almacenes             Almacen[]
+  productos             Producto[]
+  servicios             Servicio[]
+  inventarioStocks      InventarioStock[]
+  movimientosInventario MovimientoInventario[]
+  historialEstados      HistorialEstado[]
+  pedidos               Pedido[]
+  ventas                Venta[]
+  despachos             Despacho[]
+  traspasos             Traspaso[]
+}
+
+model Departamento {
+  id          String   @id @default(cuid())
+  empresaId   String
+  nombre      String
+  descripcion String?
+  gerenteId   String?
+  activo      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  gerente Usuario? @relation("GerenteDepartamento", fields: [gerenteId], references: [id])
+
+  usuarios    Usuario[]
+  proyectos   Proyecto[]
+
+  @@unique([empresaId, nombre])
+}
+
+model Usuario {
+  id             String   @id @default(cuid())
+  empresaId      String?
+  empresaActivaId String?
+  departamentoId String?
+  email          String   @unique
+  password       String
+  nombre         String
+  apellido       String?
+  telefono       String?
+  avatar         String?
+  puesto         String?
+  superAdmin     Boolean  @default(false)
+  activo         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  empresa        Empresa?     @relation("EmpresaUsuario", fields: [empresaId], references: [id], onDelete: SetNull)
+  empresaActiva  Empresa?     @relation("EmpresaActiva", fields: [empresaActivaId], references: [id], onDelete: SetNull)
+  departamento   Departamento? @relation(fields: [departamentoId], references: [id])
+  empresas       UsuarioEmpresa[]
+  roles          UsuarioRol[]
+  sesiones       Session[]
+  accounts       Account[]
+
+  empleadoCreado      Empleado[]         @relation("EmpleadoCreadoPor")
+  empleadosDirigidos  Departamento[]     @relation("GerenteDepartamento")
+  tareasAsignadas     Tarea[]            @relation("TareaAsignadaA")
+  tareasCreadas       Tarea[]            @relation("TareaCreadaPor")
+  solicitudesPermiso  SolicitudPermiso[] @relation("Solicitante")
+  solicitudesAprobadas SolicitudPermiso[] @relation("Aprobador")
+  movimientosActivo   MovimientoActivo[] @relation("MovimientoRealizadoPor")
+  aprobaciones        Aprobacion[]       @relation("AprobacionesUsuario")
+  aprobacionesPresupuesto PresupuestoRevision[] @relation("AprobadorPresupuesto")
+  presupuestosCreados Presupuesto[] @relation("PresupuestosCreados")
+  notificaciones      Notificacion[]
+  historialEstados    HistorialEstado[]
+}
+
+model UsuarioEmpresa {
+  usuarioId String
+  empresaId String
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@id([usuarioId, empresaId])
+  @@index([usuarioId])
+  @@index([empresaId])
+}
+
+// ============================================================
+// MODULO SEGURIDAD - Roles y Permisos (RBAC)
+// ============================================================
+
+model Rol {
+  id          String   @id @default(cuid())
+  empresaId   String
+  nombre      String
+  descripcion String?
+  esSistema   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  usuarios    UsuarioRol[]
+  permisos    RolPermiso[]
+
+  @@unique([empresaId, nombre])
+}
+
+model Permiso {
+  id          String            @id @default(cuid())
+  nombre      String            @unique
+  descripcion String?
+  modulo      Modulo
+  accion      TipoPermisoAcceso
+  recurso     String
+
+  roles RolPermiso[]
+}
+
+model UsuarioRol {
+  usuarioId String
+  rolId     String
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  rol     Rol     @relation(fields: [rolId], references: [id], onDelete: Cascade)
+
+  @@id([usuarioId, rolId])
+}
+
+model RolPermiso {
+  rolId     String
+  permisoId String
+
+  rol     Rol     @relation(fields: [rolId], references: [id], onDelete: Cascade)
+  permiso Permiso @relation(fields: [permisoId], references: [id], onDelete: Cascade)
+
+  @@id([rolId, permisoId])
+}
+
+// ============================================================
+// MODULO RRHH - Empleados
+// ============================================================
+
+model Empleado {
+  id            String         @id @default(cuid())
+  empresaId     String
+  usuarioId     String?        @unique
+  codigo        String         @unique
+  nombre        String
+  apellido      String
+  email         String         @unique
+  telefono      String?
+  direccion     String?
+  fechaNacimiento DateTime?
+  fechaContratacion DateTime @default(now())
+  fechaBaja     DateTime?
+  estado        EstadoEmpleado @default(ACTIVO)
+  salario       Decimal        @default(0) @db.Decimal(12, 2)
+  puesto        String?
+  departamento  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  creadoPorId   String?
+
+  empresa   Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  creadoPor Usuario? @relation("EmpleadoCreadoPor", fields: [creadoPorId], references: [id])
+
+  @@index([empresaId])
+  @@index([estado])
+  @@index([empresaId, estado])
+
+  contratos         Contrato[]
+  incidencias       Incidencia[]
+  nominas           Nomina[]
+  documentos        Documento[]
+  solicitudesPermiso SolicitudPermiso[]
+}
+
+model Contrato {
+  id               String       @id @default(cuid())
+  empleadoId       String
+  tipo             TipoContrato
+  fechaInicio      DateTime
+  fechaFin         DateTime?
+  salarioBase      Decimal      @db.Decimal(12, 2)
+  puesto           String
+  departamento     String
+  jornada          String       @default("COMPLETA")
+  activo           Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+
+  empleado Empleado @relation(fields: [empleadoId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// MODULO NOMINA
+// ============================================================
+
+model Nomina {
+  id          String        @id @default(cuid())
+  empleadoId  String
+  periodo     String
+  fechaInicio DateTime
+  fechaFin    DateTime
+  fechaPago   DateTime?
+  salarioBase Decimal       @db.Decimal(12, 2)
+  totalDevengado Decimal   @default(0) @db.Decimal(12, 2)
+  totalDeducciones Decimal  @default(0) @db.Decimal(12, 2)
+  totalPagar  Decimal       @default(0) @db.Decimal(12, 2)
+  estado      EstadoNomina  @default(BORRADOR)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  empleado Empleado @relation(fields: [empleadoId], references: [id], onDelete: Cascade)
+  detalles NominaDetalle[]
+
+  @@index([empleadoId])
+  @@index([estado])
+}
+
+model NominaDetalle {
+  id        String  @id @default(cuid())
+  nominaId  String
+  concepto  String
+  tipo      String  @default("DEVENGADO")
+  monto     Decimal @db.Decimal(12, 2)
+  formula   String?
+
+  nomina Nomina @relation(fields: [nominaId], references: [id], onDelete: Cascade)
+}
+
+model Incidencia {
+  id          String   @id @default(cuid())
+  empleadoId  String
+  tipo        String
+  fecha       DateTime
+  fechaFin    DateTime?
+  descripcion String?
+  horas       Int?
+  minutos     Int?
+  createdAt   DateTime @default(now())
+
+  empleado Empleado @relation(fields: [empleadoId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// MODULO TAREAS Y PROYECTOS
+// ============================================================
+
+model Proyecto {
+  id            String         @id @default(cuid())
+  empresaId     String
+  departamentoId String?
+  nombre        String
+  descripcion   String?
+  fechaInicio   DateTime?
+  fechaFin      DateTime?
+  presupuesto   Decimal?       @db.Decimal(14, 2)
+  estado        EstadoProyecto @default(PLANIFICADO)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  empresa      Empresa      @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  departamento Departamento? @relation(fields: [departamentoId], references: [id])
+  tareas       Tarea[]
+
+  @@index([empresaId])
+}
+
+model Tarea {
+  id           String         @id @default(cuid())
+  proyectoId   String?
+  titulo       String
+  descripcion  String?
+  estado       EstadoTarea    @default(PENDIENTE)
+  prioridad    PrioridadTarea @default(MEDIA)
+  asignadoAId  String?
+  creadoPorId  String?
+  fechaVencimiento DateTime?
+  fechaCompletada  DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  proyecto  Proyecto?  @relation(fields: [proyectoId], references: [id], onDelete: SetNull)
+  asignadoA Usuario?   @relation("TareaAsignadaA", fields: [asignadoAId], references: [id])
+  creadoPor Usuario?   @relation("TareaCreadaPor", fields: [creadoPorId], references: [id])
+  comentarios ComentarioTarea[]
+
+  @@index([proyectoId])
+  @@index([estado])
+  @@index([asignadoAId])
+}
+
+model ComentarioTarea {
+  id        String   @id @default(cuid())
+  tareaId   String
+  contenido String
+  usuarioId String?
+  createdAt DateTime @default(now())
+
+  tarea Tarea @relation(fields: [tareaId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// MODULO INVENTARIO / ACTIVOS
+// ============================================================
+
+model CategoriaActivo {
+  id          String  @id @default(cuid())
+  empresaId   String
+  nombre      String
+  descripcion String?
+  activo      Boolean @default(true)
+
+  activos Activo[]
+}
+
+model Activo {
+  id               String        @id @default(cuid())
+  empresaId        String
+  categoriaId      String?
+  codigo           String        @unique
+  nombre           String
+  descripcion      String?
+  marca            String?
+  modelo           String?
+  numeroSerie      String?
+  fechaAdquisicion DateTime?
+  valorAdquisicion Decimal?      @db.Decimal(14, 2)
+  valorActual      Decimal?      @db.Decimal(14, 2)
+  ubicacion        String?
+  estado           EstadoActivo  @default(DISPONIBLE)
+  asignadoAId      String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  empresa    Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  categoria  CategoriaActivo? @relation(fields: [categoriaId], references: [id])
+  movimientos MovimientoActivo[]
+
+  @@index([empresaId])
+  @@index([estado])
+  @@index([categoriaId])
+}
+
+model MovimientoActivo {
+  id            String              @id @default(cuid())
+  activoId      String
+  tipo          TipoMovimientoActivo
+  fecha         DateTime            @default(now())
+  responsableId String?
+  observaciones String?
+  createdAt     DateTime            @default(now())
+
+  activo       Activo   @relation(fields: [activoId], references: [id], onDelete: Cascade)
+  responsable  Usuario? @relation("MovimientoRealizadoPor", fields: [responsableId], references: [id])
+}
+
+// ============================================================
+// MODULO INVENTARIOS (Stock / Almacenes)
+// ============================================================
+
+enum TipoMovimientoInventario {
+  ENTRADA
+  SALIDA
+  AJUSTE
+  TRASPASO
+}
+
+model Almacen {
+  id        String  @id @default(cuid())
+  empresaId String
+  codigo    String
+  nombre    String
+  direccion String?
+  activo    Boolean @default(true)
+
+  empresa           Empresa               @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  stocks            InventarioStock[]
+  movimientosOrigen MovimientoInventario[] @relation("AlmacenOrigen")
+  movimientosDestino MovimientoInventario[] @relation("AlmacenDestino")
+  despachos         Despacho[]
+  traspasosOrigen   Traspaso[]             @relation("TraspasoOrigen")
+  traspasosDestino  Traspaso[]             @relation("TraspasoDestino")
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+}
+
+model Producto {
+  id             String        @id @default(cuid())
+  empresaId      String
+  codigo         String
+  nombre         String
+  descripcion    String?
+  categoria      String?
+  unidadMedida   String        @default("UNIDAD")
+  precioUnitario Decimal?      @db.Decimal(14, 2)
+  activo         Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  empresa   Empresa               @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  stocks    InventarioStock[]
+  movimientos MovimientoInventario[]
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+}
+
+model Servicio {
+  id             String        @id @default(cuid())
+  empresaId      String
+  codigo         String
+  nombre         String
+  descripcion    String?
+  categoria      String?
+  unidadMedida   String        @default("UNIDAD")
+  precioUnitario Decimal?      @db.Decimal(14, 2)
+  activo         Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  empresa   Empresa               @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+}
+
+model InventarioStock {
+  id             String  @id @default(cuid())
+  empresaId      String
+  productoId     String
+  almacenId      String
+  cantidad       Decimal @default(0) @db.Decimal(14, 2)
+  cantidadMinima Decimal @default(0) @db.Decimal(14, 2)
+  updatedAt      DateTime @updatedAt
+
+  empresa  Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  producto Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  almacen  Almacen  @relation(fields: [almacenId], references: [id], onDelete: Cascade)
+
+  @@unique([productoId, almacenId])
+  @@index([empresaId])
+  @@index([almacenId])
+}
+
+model MovimientoInventario {
+  id                String                  @id @default(cuid())
+  empresaId         String
+  productoId        String
+  almacenOrigenId   String?
+  almacenDestinoId  String?
+  tipo              TipoMovimientoInventario
+  cantidad          Decimal                 @db.Decimal(14, 2)
+  valorUnitario     Decimal?                @db.Decimal(14, 2)
+  referencia        String?
+  observaciones     String?
+  usuarioId         String?
+  createdAt         DateTime                @default(now())
+
+  empresa         Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  producto        Producto @relation(fields: [productoId], references: [id])
+  almacenOrigen   Almacen? @relation("AlmacenOrigen", fields: [almacenOrigenId], references: [id])
+  almacenDestino  Almacen? @relation("AlmacenDestino", fields: [almacenDestinoId], references: [id])
+
+  @@index([empresaId])
+  @@index([productoId])
+  @@index([almacenOrigenId])
+  @@index([almacenDestinoId])
+}
+
+// ============================================================
+// MODULO TRASPASOS (Transferencias entre almacenes)
+// ============================================================
+
+model Traspaso {
+  id                String         @id @default(cuid())
+  empresaId         String
+  numero            Int
+  fecha             DateTime       @default(now())
+  estado            EstadoTraspaso @default(BORRADOR)
+  almacenOrigenId   String
+  almacenDestinoId  String
+  notas             String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  empresa         Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  almacenOrigen   Almacen  @relation("TraspasoOrigen", fields: [almacenOrigenId], references: [id])
+  almacenDestino  Almacen  @relation("TraspasoDestino", fields: [almacenDestinoId], references: [id])
+
+  items TraspasoItem[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@index([empresaId, estado])
+}
+
+model TraspasoItem {
+  id           String  @id @default(cuid())
+  traspasoId   String
+  item         Int
+  descripcion  String
+  unidadMedida String  @default("UNIDAD")
+  cantidad     Decimal @db.Decimal(12, 2)
+
+  traspaso Traspaso @relation(fields: [traspasoId], references: [id], onDelete: Cascade)
+
+  @@index([traspasoId])
+}
+
+// ============================================================
+// MODULO DOCUMENTOS
+// ============================================================
+
+model Carpeta {
+  id          String     @id @default(cuid())
+  empresaId   String
+  nombre      String
+  padreId     String?
+  createdAt   DateTime   @default(now())
+
+  padre  Carpeta?    @relation("CarpetaPadre", fields: [padreId], references: [id])
+  hijos  Carpeta[]   @relation("CarpetaPadre")
+  documentos Documento[]
+}
+
+model Documento {
+  id          String   @id @default(cuid())
+  empleadoId  String?
+  carpetaId   String?
+  nombre      String
+  tipo        String
+  tamaño      Int
+  url         String
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  empleado Empleado? @relation(fields: [empleadoId], references: [id])
+  carpeta  Carpeta?  @relation(fields: [carpetaId], references: [id])
+}
+
+// ============================================================
+// MODULO PERMISOS / AUSENCIAS
+// ============================================================
+
+model TipoPermiso {
+  id          String             @id @default(cuid())
+  empresaId   String
+  nombre      String
+  descripcion String?
+  diasMaximos Int?
+  remunerado  Boolean            @default(true)
+  activo      Boolean            @default(true)
+
+  solicitudes SolicitudPermiso[]
+}
+
+model SolicitudPermiso {
+  id            String                  @id @default(cuid())
+  empleadoId    String
+  tipoPermisoId String
+  solicitanteId String?
+  fechaInicio   DateTime
+  fechaFin      DateTime
+  motivo        String?
+  estado        EstadoSolicitudPermiso  @default(PENDIENTE)
+  aprobadoPorId String?
+  fechaAprobacion DateTime?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  empleado    Empleado    @relation(fields: [empleadoId], references: [id], onDelete: Cascade)
+  tipoPermiso TipoPermiso @relation(fields: [tipoPermisoId], references: [id])
+  solicitante Usuario?    @relation("Solicitante", fields: [solicitanteId], references: [id])
+  aprobadoPor Usuario?    @relation("Aprobador", fields: [aprobadoPorId], references: [id])
+}
+
+// ============================================================
+// MODULO CLIENTES / CRM
+// ============================================================
+
+model Cliente {
+  id          String   @id @default(cuid())
+  empresaId   String
+  nombre      String
+  email       String?
+  telefono    String?
+  direccion   String?
+  rfc         String?
+  tipo        String   @default("EMPRESA")
+  notas       String?
+  activo      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  empresa      Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  contactos    ContactoCliente[]
+  interacciones InteraccionCliente[]
+  pedidos      Pedido[]
+  ventas       Venta[]
+}
+
+model ContactoCliente {
+  id        String @id @default(cuid())
+  clienteId String
+  nombre    String
+  cargo     String?
+  email     String?
+  telefono  String?
+  principal Boolean @default(false)
+
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+}
+
+model InteraccionCliente {
+  id          String           @id @default(cuid())
+  clienteId   String
+  tipo        TipoInteraccion
+  fecha       DateTime         @default(now())
+  descripcion String
+  usuarioId   String?
+  createdAt   DateTime         @default(now())
+
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// MODULO PEDIDOS (Pedidos de Clientes)
+// ============================================================
+
+model Pedido {
+  id          String      @id @default(cuid())
+  empresaId   String
+  numero      Int
+  clienteId   String
+  fecha       DateTime    @default(now())
+  estado      EstadoPedido @default(BORRADOR)
+  subtotal    Decimal     @default(0) @db.Decimal(14, 2)
+  impuesto    Decimal     @default(0) @db.Decimal(14, 2)
+  descuento   Decimal     @default(0) @db.Decimal(14, 2)
+  total       Decimal     @default(0) @db.Decimal(14, 2)
+  notas       String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  empresa   Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cliente   Cliente   @relation(fields: [clienteId], references: [id])
+
+  items     PedidoItem[]
+  ventas    Venta[]
+  despachos Despacho[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@index([empresaId, clienteId])
+  @@index([empresaId, estado])
+}
+
+model PedidoItem {
+  id            String        @id @default(cuid())
+  pedidoId      String
+  item          Int
+  tipoItem      TipoPedidoItem @default(PRODUCTO)
+  descripcion   String
+  unidadMedida  String        @default("UNIDAD")
+  cantidad      Decimal       @db.Decimal(12, 2)
+  precioUnitario Decimal       @db.Decimal(14, 2)
+  descuento     Decimal       @default(0) @db.Decimal(14, 2)
+  subtotal      Decimal       @default(0) @db.Decimal(14, 2)
+  impuesto      Decimal       @default(0) @db.Decimal(14, 2)
+  total         Decimal       @default(0) @db.Decimal(14, 2)
+
+  pedido Pedido @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  @@index([pedidoId])
+}
+
+// ============================================================
+// MODULO VENTAS (Facturación)
+// ============================================================
+
+model Venta {
+  id              String     @id @default(cuid())
+  empresaId       String
+  numero          Int
+  pedidoId        String?
+  clienteId       String
+  fecha           DateTime   @default(now())
+  estado          EstadoVenta @default(BORRADOR)
+  tipoFactura     String     @default("CONTADO") // CONTADO | CREDITO
+  fechaVencimiento DateTime?
+  subtotal        Decimal    @default(0) @db.Decimal(14, 2)
+  impuesto        Decimal    @default(0) @db.Decimal(14, 2)
+  descuento       Decimal    @default(0) @db.Decimal(14, 2)
+  total           Decimal    @default(0) @db.Decimal(14, 2)
+  notas           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  pedido  Pedido? @relation(fields: [pedidoId], references: [id])
+  cliente Cliente @relation(fields: [clienteId], references: [id])
+
+  items VentaItem[]
+  pagos VentaPago[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@index([empresaId, clienteId])
+  @@index([empresaId, estado])
+}
+
+model VentaItem {
+  id            String  @id @default(cuid())
+  ventaId       String
+  item          Int
+  descripcion   String
+  unidadMedida  String  @default("UNIDAD")
+  cantidad      Decimal @db.Decimal(12, 2)
+  precioUnitario Decimal @db.Decimal(14, 2)
+  descuento     Decimal @default(0) @db.Decimal(14, 2)
+  subtotal      Decimal @default(0) @db.Decimal(14, 2)
+  impuesto      Decimal @default(0) @db.Decimal(14, 2)
+  total         Decimal @default(0) @db.Decimal(14, 2)
+
+  venta Venta @relation(fields: [ventaId], references: [id], onDelete: Cascade)
+
+  @@index([ventaId])
+}
+
+model VentaPago {
+  id        String  @id @default(cuid())
+  ventaId   String
+  metodo    String  // EFECTIVO, TRANSFERENCIA, CHEQUE, TARJETA
+  monto     Decimal @db.Decimal(14, 2)
+  referencia String?
+  fecha     DateTime @default(now())
+
+  venta Venta @relation(fields: [ventaId], references: [id], onDelete: Cascade)
+
+  @@index([ventaId])
+}
+
+// ============================================================
+// MODULO COMPRAS - Centro de Costos
+// ============================================================
+
+model CentroCostos {
+  id          String  @id @default(cuid())
+  empresaId   String
+  codigo      String
+  nombre      String
+  descripcion String?
+  activo      Boolean @default(true)
+
+  empresa           Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  requisicionesItems RequisicionItem[]
+  ordenesCompra     OrdenCompra[]
+  egresos           Egreso[]
+  plantillaContableLineas PlantillaContableLinea[]
+  presupuestoItems        PresupuestoItem[]
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+}
+
+// ============================================================
+// MODULO COMPRAS - Proveedores
+// ============================================================
+
+model Proveedor {
+  id          String   @id @default(cuid())
+  empresaId   String
+  razonSocial String
+  nit         String
+  contacto    String?
+  telefono    String?
+  email       String?
+  direccion   String?
+  activo      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  empresa      Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cotizaciones Cotizacion[]
+  ordenesCompra OrdenCompra[]
+  pagos        Pago[]
+
+  @@unique([empresaId, nit])
+  @@index([empresaId])
+}
+
+// ============================================================
+// MODULO COMPRAS - Requisiciones
+// ============================================================
+
+model Requisicion {
+  id              String              @id @default(cuid())
+  empresaId       String
+  numero          Int
+  numeroFactura   Int?
+  fecha           DateTime            @default(now())
+  areaSolicitante String
+  requeridoPor    String
+  autorizadoPor   String?
+  destino         String?
+  prioridad       PrioridadRequisicion @default(NORMAL)
+  estado          EstadoRequisicion   @default(BORRADOR)
+  observaciones   String?
+  archivos        Json?
+  emailContacto   String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  items       RequisicionItem[]
+  cotizaciones Cotizacion[]
+  ordenesCompra OrdenCompra[]
+  aprobaciones Aprobacion[]
+
+  @@index([empresaId])
+  @@index([estado])
+  @@index([empresaId, estado])
+}
+
+model RequisicionItem {
+  id              String  @id @default(cuid())
+  requisicionId   String
+  item            Int
+  descripcion     String
+  centroCostosId  String?
+  unidadMedida    String
+  cantidadSolicitada Decimal @db.Decimal(12, 2)
+  createdAt       DateTime @default(now())
+
+  requisicion Requisicion @relation(fields: [requisicionId], references: [id], onDelete: Cascade)
+  centroCostos CentroCostos? @relation(fields: [centroCostosId], references: [id])
+
+  @@index([requisicionId])
+}
+
+// ============================================================
+// MODULO COMPRAS - Cotizaciones
+// ============================================================
+
+model Cotizacion {
+  id              String   @id @default(cuid())
+  empresaId       String
+  requisicionId   String
+  proveedorId     String
+  numero          Int
+  fecha           DateTime @default(now())
+  valorTotal      Decimal  @default(0) @db.Decimal(14, 2)
+  tiempoEntrega   String?
+  formaPago       String?
+  ganadora        Boolean  @default(false)
+  observaciones   String?
+  archivos        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  empresa     Empresa     @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  requisicion Requisicion @relation(fields: [requisicionId], references: [id])
+  proveedor   Proveedor   @relation(fields: [proveedorId], references: [id])
+
+  items       CotizacionItem[]
+  ordenesCompra OrdenCompra[]
+
+  @@index([empresaId])
+  @@index([requisicionId])
+  @@index([proveedorId])
+}
+
+model CotizacionItem {
+  id            String  @id @default(cuid())
+  cotizacionId  String
+  requisicionItemId String?
+  item          Int
+  descripcion   String
+  unidadMedida  String
+  cantidad      Decimal @db.Decimal(12, 2)
+  valorUnitario Decimal @db.Decimal(14, 2)
+  valorTotal    Decimal @db.Decimal(14, 2)
+
+  cotizacion Cotizacion @relation(fields: [cotizacionId], references: [id], onDelete: Cascade)
+
+  @@index([cotizacionId])
+}
+
+// ============================================================
+// MODULO COMPRAS - Aprobaciones
+// ============================================================
+
+model AprobacionConfig {
+  id          String @id @default(cuid())
+  empresaId   String
+  desde       Decimal @db.Decimal(14, 2)
+  hasta       Decimal @db.Decimal(14, 2)
+  cargoAprobador String
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId])
+}
+
+model Aprobacion {
+  id            String   @id @default(cuid())
+  empresaId     String
+  requisicionId String?
+  ordenCompraId String?
+  tipo          String
+  nivel         Int      @default(1)
+  estado        String   @default("PENDIENTE")
+  aprobadoPor   String?
+  fechaAccion   DateTime?
+  comentarios   String?
+  archivoAdjunto Json?
+  createdAt     DateTime @default(now())
+
+  empresa      Empresa      @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  requisicion  Requisicion? @relation(fields: [requisicionId], references: [id])
+  ordenCompra  OrdenCompra? @relation(fields: [ordenCompraId], references: [id])
+  usuario      Usuario?     @relation("AprobacionesUsuario", fields: [aprobadoPor], references: [id])
+
+  @@index([empresaId])
+  @@index([requisicionId])
+  @@index([ordenCompraId])
+}
+
+// ============================================================
+// MODULO COMPRAS - Orden de Compra
+// ============================================================
+
+model OrdenCompra {
+  id              String   @id @default(cuid())
+  empresaId       String
+  requisicionId   String
+  cotizacionId    String?
+  proveedorId     String
+  numero          Int
+  fecha           DateTime @default(now())
+  subtotal        Decimal  @default(0) @db.Decimal(14, 2)
+  descuento       Decimal  @default(0) @db.Decimal(14, 2)
+  iva             Decimal  @default(0) @db.Decimal(14, 2)
+  valorTotal      Decimal  @default(0) @db.Decimal(14, 2)
+  condicionesComerciales String?
+  fechaEntrega    DateTime?
+  sitioEntrega    String?
+  centroCostosId  String?
+  formaPago       String?
+  correoFacturacion String?
+  elaboradoPor    String?
+  solicitadoPor   String?
+  aprobadoPor     String?
+  estado          String   @default("EMITIDA")
+  observaciones   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  empresa      Empresa      @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  requisicion  Requisicion  @relation(fields: [requisicionId], references: [id])
+  cotizacion   Cotizacion?  @relation(fields: [cotizacionId], references: [id])
+  proveedor    Proveedor    @relation(fields: [proveedorId], references: [id])
+  centroCostos CentroCostos? @relation(fields: [centroCostosId], references: [id])
+
+  items       OrdenCompraItem[]
+  recepciones Recepcion[]
+  aprobaciones Aprobacion[]
+  cuentasPagar CuentaPagar[]
+
+  @@index([empresaId])
+  @@index([requisicionId])
+  @@index([proveedorId])
+}
+
+model OrdenCompraItem {
+  id              String  @id @default(cuid())
+  ordenCompraId   String
+  item            Int
+  descripcion     String
+  unidadMedida    String
+  cantidad        Decimal @db.Decimal(12, 2)
+  valorUnitario   Decimal @db.Decimal(14, 2)
+  valorTotal      Decimal @db.Decimal(14, 2)
+
+  ordenCompra OrdenCompra @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
+
+  @@index([ordenCompraId])
+}
+
+// ============================================================
+// MODULO COMPRAS - Recepcion de Bienes
+// ============================================================
+
+model Recepcion {
+  id              String          @id @default(cuid())
+  empresaId       String
+  ordenCompraId   String
+  fechaRecepcion  DateTime        @default(now())
+  remision        String?
+  observaciones   String?
+  estado          EstadoRecepcion @default(PENDIENTE)
+  actaRecibido    String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  empresa     Empresa     @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  ordenCompra OrdenCompra @relation(fields: [ordenCompraId], references: [id])
+
+  items RecepcionItem[]
+
+  @@index([empresaId])
+  @@index([ordenCompraId])
+}
+
+model RecepcionItem {
+  id              String  @id @default(cuid())
+  recepcionId     String
+  ordenItemId     String?
+  item            Int
+  descripcion     String
+  cantidadRecibida Decimal @db.Decimal(12, 2)
+  observaciones   String?
+
+  recepcion Recepcion @relation(fields: [recepcionId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// MODULO DESPACHOS (Envíos a Clientes)
+// ============================================================
+
+model Despacho {
+  id          String         @id @default(cuid())
+  empresaId   String
+  numero      Int
+  pedidoId    String?
+  almacenId   String
+  fecha       DateTime       @default(now())
+  estado      EstadoDespacho @default(BORRADOR)
+  destino     String?
+  notas       String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  pedido  Pedido? @relation(fields: [pedidoId], references: [id])
+  almacen Almacen @relation(fields: [almacenId], references: [id])
+
+  items DespachoItem[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@index([empresaId, pedidoId])
+  @@index([empresaId, estado])
+}
+
+model DespachoItem {
+  id           String  @id @default(cuid())
+  despachoId   String
+  item         Int
+  descripcion  String
+  unidadMedida String  @default("UNIDAD")
+  cantidad     Decimal @db.Decimal(12, 2)
+  lote         String?
+
+  despacho Despacho @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+
+  @@index([despachoId])
+}
+
+// ============================================================
+// MODULO COMPRAS - Cuentas por Pagar
+// ============================================================
+
+model CuentaPagar {
+  id              String             @id @default(cuid())
+  empresaId       String
+  ordenCompraId   String
+  tipo            TipoPago           @default(FACTURA)
+  numeroFactura   String?
+  fechaFactura    DateTime?
+  fechaVencimiento DateTime?
+  valor           Decimal            @db.Decimal(14, 2)
+  saldoPendiente  Decimal            @db.Decimal(14, 2)
+  estado          EstadoCuentaPagar  @default(PENDIENTE)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  empresa     Empresa           @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  ordenCompra OrdenCompra       @relation(fields: [ordenCompraId], references: [id])
+
+  pagos Pago[]
+
+  @@index([empresaId])
+  @@index([ordenCompraId])
+  @@index([estado])
+}
+
+// ============================================================
+// MODULO COMPRAS - Pagos / Egresos
+// ============================================================
+
+model Pago {
+  id              String      @id @default(cuid())
+  empresaId       String
+  cuentaPagarId   String
+  proveedorId     String
+  cuentaBancariaId String?
+  tipo            TipoPago
+  metodo          MetodoPago
+  valor           Decimal     @db.Decimal(14, 2)
+  fechaPago       DateTime?
+  fechaVencimiento DateTime?
+  fechaProgramada DateTime?
+  estado          EstadoPago  @default(PENDIENTE)
+  soporteBancario String?
+  comprobante     String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  empresa       Empresa        @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cuentaPagar   CuentaPagar    @relation(fields: [cuentaPagarId], references: [id])
+  proveedor     Proveedor      @relation(fields: [proveedorId], references: [id])
+  cuentaBancaria CuentaBancaria? @relation(fields: [cuentaBancariaId], references: [id])
+
+  egreso Egreso?
+
+  @@index([empresaId])
+  @@index([cuentaPagarId])
+  @@index([estado])
+}
+
+model Egreso {
+  id              String  @id @default(cuid())
+  empresaId       String
+  pagoId          String  @unique
+  numero          Int
+  fecha           DateTime @default(now())
+  beneficiario    String
+  cuentaBancaria  String?
+  cuentaContable  String?
+  centroCostosId  String?
+  valor           Decimal @db.Decimal(14, 2)
+  observaciones   String?
+  createdAt       DateTime @default(now())
+
+  empresa       Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  pago          Pago          @relation(fields: [pagoId], references: [id])
+  centroCostos  CentroCostos? @relation(fields: [centroCostosId], references: [id])
+
+  @@index([empresaId])
+  @@index([pagoId])
+}
+
+// ============================================================
+// MODULO CONTABILIDAD
+// ============================================================
+
+model PlanCuenta {
+  id        String  @id @default(cuid())
+  empresaId String
+  codigo    String
+  nombre    String
+  tipo      String
+  nivel     Int     @default(1)
+  padreId   String?
+  activo    Boolean @default(true)
+  createdAt DateTime @default(now())
+
+  empresa Empresa      @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  padre   PlanCuenta?  @relation("PlanCuentaPadre", fields: [padreId], references: [id])
+  hijos   PlanCuenta[] @relation("PlanCuentaPadre")
+  detalles AsientoDetalle[]
+  presupuestoItems PresupuestoItem[]
+}
+
+model AsientoContable {
+  id          String        @id @default(cuid())
+  empresaId   String
+  numero      Int
+  fecha       DateTime
+  concepto    String
+  tipo        TipoAsiento
+  estado      EstadoAsiento @default(BORRADOR)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  detalles AsientoDetalle[]
+}
+
+model AsientoDetalle {
+  id             String  @id @default(cuid())
+  asientoId      String
+  planCuentaId   String
+  debe           Decimal @default(0) @db.Decimal(14, 2)
+  haber          Decimal @default(0) @db.Decimal(14, 2)
+  descripcion    String?
+
+  asiento   AsientoContable @relation(fields: [asientoId], references: [id], onDelete: Cascade)
+  planCuenta PlanCuenta     @relation(fields: [planCuentaId], references: [id])
+}
+
+// ============================================================
+// MODULO CONTABILIDAD - Plantillas Contables (Motor Contable)
+// ============================================================
+
+model PlantillaContable {
+  id         String   @id @default(cuid())
+  empresaId  String
+  evento     String   // FACTURA_PROVEEDOR, PAGO_PROVEEDOR, RECEPCION_OC, EGRESO, NOTA_DEBITO, NOTA_CREDITO, FACTURA_CLIENTE
+  concepto   String
+  activo     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  empresa Empresa                 @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  lineas  PlantillaContableLinea[]
+
+  @@unique([empresaId, evento])
+  @@index([empresaId])
+}
+
+model PlantillaContableLinea {
+  id             String  @id @default(cuid())
+  plantillaId    String
+  tipo           String  // "DEBE" | "HABER"
+  cuentaCodigo   String  // código del PlanCuenta
+  centroCostosId String?
+  formula        String  // VALOR_FACTURA, IVA, VALOR_TOTAL, SALDO, PORCENTAJE
+  porcentaje     Float?
+
+  plantilla    PlantillaContable @relation(fields: [plantillaId], references: [id], onDelete: Cascade)
+  centroCostos CentroCostos?     @relation(fields: [centroCostosId], references: [id])
+
+  @@index([plantillaId])
+}
+
+model TipoContabilidad {
+  id        String @id @default(cuid())
+  empresaId String @unique
+  tipo      String // "INTERNA" | "WORD_OFFICE" | "SYSCAR" | "ZEUS" | "OTRO"
+  config    Json?  // { apiUrl, token, formato, etc. }
+  activo    Boolean @default(true)
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// MODULO TESORERIA
+// ============================================================
+
+model CuentaBancaria {
+  id              String             @id @default(cuid())
+  empresaId       String
+  banco           String
+  numeroCuenta    String
+  tipo            TipoCuentaBancaria
+  saldoInicial    Decimal            @default(0) @db.Decimal(14, 2)
+  saldoActual     Decimal            @default(0) @db.Decimal(14, 2)
+  moneda          String             @default("MXN")
+  activo          Boolean            @default(true)
+  createdAt       DateTime           @default(now())
+
+  movimientos MovimientoBancario[]
+  pagos       Pago[]
+
+  @@index([empresaId])
+  @@index([activo])
+}
+
+model MovimientoBancario {
+  id              String                  @id @default(cuid())
+  cuentaId        String
+  tipo            String
+  fecha           DateTime
+  monto           Decimal                 @db.Decimal(14, 2)
+  descripcion     String?
+  referencia      String?
+  estado          EstadoMovimientoBancario @default(PENDIENTE)
+  fechaConciliacion DateTime?
+  createdAt       DateTime                @default(now())
+
+  cuenta CuentaBancaria @relation(fields: [cuentaId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// MODULO NOTIFICACIONES
+// ============================================================
+
+model Notificacion {
+  id              String   @id @default(cuid())
+  empresaId       String
+  usuarioId       String?
+  tipo            String
+  titulo          String
+  mensaje         String
+  referenciaId    String?
+  referenciaTipo  String?
+  leida           Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([empresaId, usuarioId])
+  @@index([empresaId, leida])
+  @@index([usuarioId])
+}
+
+// ============================================================
+// MODULO PRESUPUESTOS
+// ============================================================
+
+enum EstadoPresupuesto {
+  BORRADOR
+  EN_REVISION
+  APROBADO
+  CERRADO
+  RECHAZADO
+}
+
+enum TipoPresupuesto {
+  OPERATIVO
+  CAPEX
+  PROYECTO
+  GENERAL
+}
+
+model Presupuesto {
+  id              String            @id @default(cuid())
+  empresaId       String
+  codigo          String
+  nombre          String
+  descripcion     String?
+  tipo            TipoPresupuesto   @default(OPERATIVO)
+  año             Int
+  mes             Int?
+  estado          EstadoPresupuesto @default(BORRADOR)
+  creadoPorId     String
+  fechaCreacion   DateTime          @default(now())
+  fechaAprobacion DateTime?
+  notas           String?
+
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  creadoPor Usuario @relation("PresupuestosCreados", fields: [creadoPorId], references: [id])
+
+  items      PresupuestoItem[]
+  revisiones PresupuestoRevision[]
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId, año])
+  @@index([empresaId, estado])
+}
+
+model PresupuestoItem {
+  id                String   @id @default(cuid())
+  presupuestoId     String
+  centroCostosId    String?
+  cuentaContableId  String?
+  descripcion       String
+  valorPresupuestado Decimal @db.Decimal(14, 2)
+  notas             String?
+
+  presupuesto    Presupuesto   @relation(fields: [presupuestoId], references: [id], onDelete: Cascade)
+  centroCostos   CentroCostos? @relation(fields: [centroCostosId], references: [id])
+  cuentaContable PlanCuenta?   @relation(fields: [cuentaContableId], references: [id])
+
+  @@index([presupuestoId])
+}
+
+model PresupuestoRevision {
+  id            String   @id @default(cuid())
+  presupuestoId String
+  nivel         Int
+  estado        String   @default("PENDIENTE")
+  aprobadoPorId String?
+  fecha         DateTime @default(now())
+  observaciones String?
+
+  presupuesto Presupuesto @relation(fields: [presupuestoId], references: [id], onDelete: Cascade)
+  aprobadoPor Usuario?    @relation("AprobadorPresupuesto", fields: [aprobadoPorId], references: [id])
+
+  @@index([presupuestoId])
+}
+
+// ============================================================
+// HISTORIAL DE ESTADOS (Auditoría / Tracking)
+// ============================================================
+
+model HistorialEstado {
+  id            String   @id @default(cuid())
+  empresaId     String
+  entidadTipo   String   // REQUISICION | ORDEN_COMPRA | COTIZACION | RECEPCION | CUENTA_PAGAR | PAGO
+  entidadId     String
+  estadoAnterior String?
+  estadoNuevo   String
+  descripcion   String?  // Descripción legible del cambio
+  usuarioId     String?
+  referenciaId  String?  // ID opcional de entidad relacionada (ej. OC en requisición)
+  createdAt     DateTime @default(now())
+
+  empresa Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([empresaId])
+  @@index([entidadTipo, entidadId])
+  @@index([entidadId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// SESSION - NextAuth
+// ============================================================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user Usuario @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user Usuario @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
