@@ -37,6 +37,13 @@ COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/node_modules/mariadb ./node_modules/mariadb
 COPY --from=builder /app/node_modules/bcryptjs ./node_modules/bcryptjs
 
+# Create .bin symlink for prisma CLI
+RUN mkdir -p node_modules/.bin && \
+    ln -sf ../prisma/build/index.js node_modules/.bin/prisma
+
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 RUN chown -R nextjs:nodejs /app
 USER nextjs
 
@@ -44,4 +51,4 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["node", "server.js"]
+CMD ["/app/entrypoint.sh"]
