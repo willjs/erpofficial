@@ -58,14 +58,82 @@ export default function ReportesPage() {
           break
         }
         case "tesoreria": {
+          const { getReporteTesoreria } = await import("@/actions/reporte-tesoreria")
+          const r = await getReporteTesoreria()
+
+          // Sheet 1 — Resumen
           XLSX.utils.book_append_sheet(wb,
             XLSX.utils.json_to_sheet([
-              { Indicador: "Pagos Pendientes (cantidad)", Valor: d.tesoreria.pagosPendientes },
-              { Indicador: "Saldo Pendiente Total", Valor: d.tesoreria.saldoPendiente },
-              { Indicador: "Flujo de Caja (bancos)", Valor: d.tesoreria.flujoCaja },
-              { Indicador: "Cuentas por Pagar", Valor: d.tesoreria.cuentasPagarCount },
-              { Indicador: "Total Cuentas por Pagar", Valor: d.tesoreria.cuentasPagarTotal },
-            ]), "Tesorería")
+              { Indicador: "Saldo Total en Bancos", Valor: r.resumen.saldoTotal },
+              { Indicador: "Cuentas por Pagar Pendientes", Valor: r.resumen.cuentasPagarPendientes },
+              { Indicador: "Cuentas por Pagar Pagadas", Valor: r.resumen.cuentasPagarPagadas },
+              { Indicador: "Total Pendiente por Pagar", Valor: r.resumen.totalPendiente },
+              { Indicador: "Total Pagado", Valor: r.resumen.totalPagado },
+              { Indicador: "Pagos Realizados este Mes", Valor: r.resumen.pagosDelMes },
+              { Indicador: "Egresos este Mes", Valor: r.resumen.egresosDelMes },
+              { Indicador: "Ingresos este Mes", Valor: r.resumen.ingresosDelMes },
+            ]), "Resumen")
+
+          // Sheet 2 — Flujo Mensual
+          XLSX.utils.book_append_sheet(wb,
+            XLSX.utils.json_to_sheet(r.flujoMensual.map(f => ({
+              Mes: f.mes,
+              Ingresos: f.ingresos,
+              Egresos: f.egastos,
+              "Saldo del Período": f.saldo,
+            }))), "Flujo Mensual")
+
+          // Sheet 3 — Flujo Trimestral
+          XLSX.utils.book_append_sheet(wb,
+            XLSX.utils.json_to_sheet(r.flujoTrimestral.map(f => ({
+              Trimestre: f.trimestre,
+              Ingresos: f.ingresos,
+              Egresos: f.egastos,
+              "Saldo del Período": f.saldo,
+            }))), "Flujo Trimestral")
+
+          // Sheet 4 — Flujo Anual
+          XLSX.utils.book_append_sheet(wb,
+            XLSX.utils.json_to_sheet(r.flujoAnual.map(f => ({
+              Año: f.anio,
+              Ingresos: f.ingresos,
+              Egresos: f.egastos,
+              "Saldo del Período": f.saldo,
+            }))), "Flujo Anual")
+
+          // Sheet 5 — Cuentas por Pagar
+          XLSX.utils.book_append_sheet(wb,
+            XLSX.utils.json_to_sheet(r.cuentasPagar.map(c => ({
+              Proveedor: c.proveedor,
+              "OC #": c.oc,
+              Factura: c.factura ?? "—",
+              Valor: c.valor,
+              "Saldo Pend.": c.saldoPendiente,
+              Estado: c.estado,
+              "Vencimiento": c.fechaVencimiento ?? "—",
+            }))), "Cuentas por Pagar")
+
+          // Sheet 6 — Egresos
+          XLSX.utils.book_append_sheet(wb,
+            XLSX.utils.json_to_sheet(r.egresos.map(e => ({
+              "#": e.numero,
+              Fecha: e.fecha,
+              Beneficiario: e.beneficiario,
+              "Cuenta Bancaria": e.cuenta ?? "—",
+              Valor: e.valor,
+              Factura: e.factura ?? "—",
+            }))), "Egresos")
+
+          // Sheet 7 — Movimientos Bancarios
+          XLSX.utils.book_append_sheet(wb,
+            XLSX.utils.json_to_sheet(r.movimientos.map(m => ({
+              Fecha: m.fecha,
+              Tipo: m.tipo,
+              Monto: m.monto,
+              Descripción: m.descripcion ?? "—",
+              Cuenta: m.cuenta,
+              Estado: m.estado,
+            }))), "Movimientos")
           break
         }
         case "nomina": {

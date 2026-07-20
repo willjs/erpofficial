@@ -9,15 +9,19 @@ export default async function AdminLayout({
   children: React.ReactNode
 }) {
   const session = await auth()
-  if (!session?.user?.id || !(session.user as any).superAdmin) {
+  const sessionUser = session?.user as any
+  if (!session?.user?.id) {
     redirect("/login")
+  }
+  if (!sessionUser?.superAdmin) {
+    redirect("/")
   }
 
   return (
     <div className="flex h-screen overflow-hidden">
       <AdminSidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <AdminHeader />
+        <AdminHeader userName={sessionUser?.name} avatarUrl={sessionUser?.image} />
         <main className="flex-1 overflow-y-auto p-6">
           {children}
         </main>

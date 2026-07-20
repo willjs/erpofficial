@@ -7,7 +7,7 @@ import { prisma } from "./prisma"
 async function getEmpresasInfo(usuarioId: string) {
   const userEmpresas = await prisma.usuarioEmpresa.findMany({
     where: { usuarioId },
-    include: { empresa: { select: { id: true, nombre: true, rfc: true } } },
+    include: { empresa: { select: { id: true, nombre: true, rfc: true, logo: true } } },
   })
   return userEmpresas.map((ue) => ue.empresa)
 }
@@ -69,8 +69,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           id: user.id,
           email: user.email,
           name: `${user.nombre} ${user.apellido || ""}`,
+          image: user.avatar,
           empresaId: empresaActivaId,
-          empresas: empresas.map((e) => ({ id: e.id, nombre: e.nombre, rfc: e.rfc })),
+          empresas: empresas.map((e) => ({ id: e.id, nombre: e.nombre, rfc: e.rfc, logo: e.logo })),
           modulosActivos,
           roles: user.roles.map((r) => r.rol.nombre),
           superAdmin: user.superAdmin,
@@ -87,18 +88,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.modulosActivos = (user as any).modulosActivos
         token.roles = (user as any).roles
         token.superAdmin = (user as any).superAdmin
+        token.picture = (user as any).image
       }
       // Refrescar empresas + modulosActivos desde DB en cada update
       if (trigger === "update") {
         const userId = token.id as string
         const empresaId = session?.empresaId || (token.empresaId as string)
 
-        // Refrescar lista de empresas del usuario
+        // Refrescar datos del usuario
+        const usuarioActual = await prisma.usuario.findUnique({ where: { id: userId }, select: { avatar: true, nombre: true, apellido: true } })
+        if (usuarioActual) {
+          token.picture = usuarioActual.avatar
+          token.name = `${usuarioActual.nombre} ${usuarioActual.apellido || ""}`
+        }
+
         const userEmpresas = await prisma.usuarioEmpresa.findMany({
           where: { usuarioId: userId },
-          include: { empresa: { select: { id: true, nombre: true, rfc: true } } },
+          include: { empresa: { select: { id: true, nombre: true, rfc: true, logo: true } } },
         })
-        token.empresas = userEmpresas.map((ue) => ({ id: ue.empresa.id, nombre: ue.empresa.nombre, rfc: ue.empresa.rfc }))
+        token.empresas = userEmpresas.map((ue) => ({ id: ue.empresa.id, nombre: ue.empresa.nombre, rfc: ue.empresa.rfc, logo: ue.empresa.logo }))
 
         if (empresaId) {
           token.empresaId = session?.empresaId || token.empresaId
@@ -113,6 +121,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string
+        session.user.image = token.picture as string
         ;(session.user as any).empresaId = token.empresaId
         ;(session.user as any).empresas = token.empresas
         ;(session.user as any).modulosActivos = token.modulosActivos

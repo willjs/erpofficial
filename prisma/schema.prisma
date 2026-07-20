@@ -25,6 +25,9 @@ enum Modulo {
   PEDIDOS
   DESPACHOS
   TRASPASOS
+  OPERACIONES
+  CUENTAS_COBRAR
+  DASHBOARD
 }
 
 enum PrioridadRequisicion {
@@ -35,10 +38,6 @@ enum PrioridadRequisicion {
 
 enum EstadoRequisicion {
   BORRADOR
-  PENDIENTE_APROBACION
-  APROBADA_COMPRA
-  APROBADA
-  RECHAZADA
   EN_COTIZACION
   ORDEN_COMPRA_GENERADA
   CERRADA
@@ -84,6 +83,16 @@ enum TipoPermisoAcceso {
   UPDATE
   DELETE
   ALL
+  APROBAR
+  RECHAZAR
+  ANULAR
+  CERRAR
+  REABRIR
+  EXPORTAR
+  IMPORTAR
+  ENVIAR
+  DUPLICAR
+  CONCILIAR
 }
 
 enum EstadoEmpleado {
@@ -224,6 +233,47 @@ enum TipoInteraccion {
   PROPUESTA
 }
 
+enum EstadoProgramacion {
+  BORRADOR
+  PROGRAMADA
+  APROBADA
+  CANCELADA
+}
+
+enum EstadoOrdenOperativa {
+  PENDIENTE
+  ASIGNADA
+  EN_PROCESO
+  FINALIZADA
+  CERRADA
+}
+
+enum EstadoDeliveryTicket {
+  BORRADOR
+  CONFIRMADO
+  CERRADO
+  CANCELADO
+}
+
+enum EstadoFacturaDeliveryTicket {
+  PENDIENTE
+  PAGADA
+  CANCELADA
+}
+
+enum EstadoCuentaCobrar {
+  PENDIENTE
+  PARCIAL
+  PAGADA
+  CANCELADA
+}
+
+enum EstadoReciboCaja {
+  PENDIENTE
+  CONFIRMADO
+  ANULADO
+}
+
 // ============================================================
 // MODULO CORE - Empresa y Estructura
 // ============================================================
@@ -261,8 +311,6 @@ model Empresa {
   proveedores   Proveedor[]
   requisiciones Requisicion[]
   cotizaciones  Cotizacion[]
-  aprobacionesConfig AprobacionConfig[]
-  aprobaciones  Aprobacion[]
   ordenesCompra OrdenCompra[]
   recepciones   Recepcion[]
   cuentasPagar  CuentaPagar[]
@@ -282,6 +330,21 @@ model Empresa {
   ventas                Venta[]
   despachos             Despacho[]
   traspasos             Traspaso[]
+  programaciones        ProgramacionOperativa[]
+  ordenesOperativas     OrdenOperativa[]
+  barcazas              Barcaza[]
+  remolcadores          Remolcador[]
+  vehiculos             Vehiculo[]
+  conductores           Conductor[]
+  capitanes             Capitan[]
+  deliveryTickets       DeliveryTicket[]
+  cuentasCobrar         CuentaCobrar[]
+  recibosCaja           ReciboCaja[]
+  codigosAprobacion     CodigoAprobacion[]
+  linksComparativos     LinkComparativo[]
+  facturasDeliveryTicket FacturaDeliveryTicket[]
+  automatizaciones      Automatizacion[]
+  auditoriasAutomatizacion AutomatizacionAuditoria[]
 }
 
 model Departamento {
@@ -334,11 +397,11 @@ model Usuario {
   solicitudesPermiso  SolicitudPermiso[] @relation("Solicitante")
   solicitudesAprobadas SolicitudPermiso[] @relation("Aprobador")
   movimientosActivo   MovimientoActivo[] @relation("MovimientoRealizadoPor")
-  aprobaciones        Aprobacion[]       @relation("AprobacionesUsuario")
   aprobacionesPresupuesto PresupuestoRevision[] @relation("AprobadorPresupuesto")
   presupuestosCreados Presupuesto[] @relation("PresupuestosCreados")
   notificaciones      Notificacion[]
   historialEstados    HistorialEstado[]
+  auditoriasAutomatizacion AutomatizacionAuditoria[]
 }
 
 model UsuarioEmpresa {
@@ -379,7 +442,8 @@ model Permiso {
   accion      TipoPermisoAcceso
   recurso     String
 
-  roles RolPermiso[]
+  roles     RolPermiso[]
+  menus     MenuPermiso[]
 }
 
 model UsuarioRol {
@@ -400,6 +464,35 @@ model RolPermiso {
   permiso Permiso @relation(fields: [permisoId], references: [id], onDelete: Cascade)
 
   @@id([rolId, permisoId])
+}
+
+// ============================================================
+// MODULO MENUS - Menús jerárquicos con permisos
+// ============================================================
+
+model Menu {
+  id        String  @id @default(cuid())
+  modulo    Modulo
+  label     String
+  href      String?
+  icon      String?
+  parentId  String?
+  orden     Int     @default(0)
+  visible   Boolean @default(true)
+
+  parent    Menu?          @relation("MenuHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Menu[]         @relation("MenuHierarchy")
+  permisos  MenuPermiso[]
+}
+
+model MenuPermiso {
+  id        String  @id @default(cuid())
+  menuId    String
+  permisoId String
+  menu      Menu    @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  permiso   Permiso @relation(fields: [permisoId], references: [id], onDelete: Cascade)
+
+  @@unique([menuId, permisoId])
 }
 
 // ============================================================
@@ -668,6 +761,9 @@ model Producto {
   empresa   Empresa               @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   stocks    InventarioStock[]
   movimientos MovimientoInventario[]
+  programaciones ProgramacionOperativa[]
+  ordenesOperativas OrdenOperativa[]
+  deliveryTickets DeliveryTicket[]
 
   @@unique([empresaId, codigo])
   @@index([empresaId])
@@ -854,6 +950,7 @@ model Cliente {
   email       String?
   telefono    String?
   direccion   String?
+  ciudad      String?
   rfc         String?
   tipo        String   @default("EMPRESA")
   notas       String?
@@ -866,6 +963,11 @@ model Cliente {
   interacciones InteraccionCliente[]
   pedidos      Pedido[]
   ventas       Venta[]
+  programaciones ProgramacionOperativa[]
+  ordenesOperativas OrdenOperativa[]
+  deliveryTickets DeliveryTicket[]
+  cuentasCobrar CuentaCobrar[]
+  recibosCaja   ReciboCaja[]
 }
 
 model ContactoCliente {
@@ -952,6 +1054,7 @@ model Venta {
   empresaId       String
   numero          Int
   pedidoId        String?
+  deliveryTicketId String?
   clienteId       String
   fecha           DateTime   @default(now())
   estado          EstadoVenta @default(BORRADOR)
@@ -967,10 +1070,12 @@ model Venta {
 
   empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   pedido  Pedido? @relation(fields: [pedidoId], references: [id])
+  deliveryTicket DeliveryTicket? @relation(fields: [deliveryTicketId], references: [id])
   cliente Cliente @relation(fields: [clienteId], references: [id])
 
   items VentaItem[]
   pagos VentaPago[]
+  cuentasCobrar CuentaCobrar[]
 
   @@unique([empresaId, numero])
   @@index([empresaId])
@@ -1043,9 +1148,11 @@ model Proveedor {
   nit         String
   contacto    String?
   telefono    String?
-  email       String?
-  direccion   String?
-  activo      Boolean  @default(true)
+  email        String?
+  emailFactura String?
+  direccion    String?
+  archivos     Json?
+  activo       Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -1085,11 +1192,12 @@ model Requisicion {
   items       RequisicionItem[]
   cotizaciones Cotizacion[]
   ordenesCompra OrdenCompra[]
-  aprobaciones Aprobacion[]
+  linksComparativos LinkComparativo[]
 
   @@index([empresaId])
   @@index([estado])
   @@index([empresaId, estado])
+  @@unique([empresaId, numero])
 }
 
 model RequisicionItem {
@@ -1125,6 +1233,10 @@ model Cotizacion {
   ganadora        Boolean  @default(false)
   observaciones   String?
   archivos        Json?
+  tokenPublico    String?  @unique
+  codigoAprobacion String? @unique
+  aprobadaPublicamente Boolean @default(false)
+  fechaAprobacionPublica DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -1138,6 +1250,7 @@ model Cotizacion {
   @@index([empresaId])
   @@index([requisicionId])
   @@index([proveedorId])
+  @@unique([empresaId, numero])
 }
 
 model CotizacionItem {
@@ -1150,6 +1263,9 @@ model CotizacionItem {
   cantidad      Decimal @db.Decimal(12, 2)
   valorUnitario Decimal @db.Decimal(14, 2)
   valorTotal    Decimal @db.Decimal(14, 2)
+  valorProveedor1 Decimal? @db.Decimal(14, 2)
+  valorProveedor2 Decimal? @db.Decimal(14, 2)
+  valorProveedor3 Decimal? @db.Decimal(14, 2)
 
   cotizacion Cotizacion @relation(fields: [cotizacionId], references: [id], onDelete: Cascade)
 
@@ -1157,43 +1273,23 @@ model CotizacionItem {
 }
 
 // ============================================================
-// MODULO COMPRAS - Aprobaciones
+// MODULO COMPRAS - Comparativo de Cotizaciones
 // ============================================================
 
-model AprobacionConfig {
-  id          String @id @default(cuid())
-  empresaId   String
-  desde       Decimal @db.Decimal(14, 2)
-  hasta       Decimal @db.Decimal(14, 2)
-  cargoAprobador String
+model LinkComparativo {
+  id             String   @id @default(cuid())
+  empresaId      String
+  requisicionId  String
+  token          String   @unique
+  cotizacionesId Json     // JSON array of selected cotizacion IDs
+  activo         Boolean  @default(true)
+  createdAt      DateTime @default(now())
 
-  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-
-  @@index([empresaId])
-}
-
-model Aprobacion {
-  id            String   @id @default(cuid())
-  empresaId     String
-  requisicionId String?
-  ordenCompraId String?
-  tipo          String
-  nivel         Int      @default(1)
-  estado        String   @default("PENDIENTE")
-  aprobadoPor   String?
-  fechaAccion   DateTime?
-  comentarios   String?
-  archivoAdjunto Json?
-  createdAt     DateTime @default(now())
-
-  empresa      Empresa      @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  requisicion  Requisicion? @relation(fields: [requisicionId], references: [id])
-  ordenCompra  OrdenCompra? @relation(fields: [ordenCompraId], references: [id])
-  usuario      Usuario?     @relation("AprobacionesUsuario", fields: [aprobadoPor], references: [id])
+  empresa     Empresa     @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  requisicion Requisicion @relation(fields: [requisicionId], references: [id], onDelete: Cascade)
 
   @@index([empresaId])
   @@index([requisicionId])
-  @@index([ordenCompraId])
 }
 
 // ============================================================
@@ -1223,6 +1319,7 @@ model OrdenCompra {
   aprobadoPor     String?
   estado          String   @default("EMITIDA")
   observaciones   String?
+  tokenPublico    String?  @unique
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -1234,12 +1331,12 @@ model OrdenCompra {
 
   items       OrdenCompraItem[]
   recepciones Recepcion[]
-  aprobaciones Aprobacion[]
   cuentasPagar CuentaPagar[]
 
   @@index([empresaId])
   @@index([requisicionId])
   @@index([proveedorId])
+  @@unique([empresaId, numero])
 }
 
 model OrdenCompraItem {
@@ -1251,6 +1348,7 @@ model OrdenCompraItem {
   cantidad        Decimal @db.Decimal(12, 2)
   valorUnitario   Decimal @db.Decimal(14, 2)
   valorTotal      Decimal @db.Decimal(14, 2)
+  tipoIva         String  @default("EXENTO")
 
   ordenCompra OrdenCompra @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
 
@@ -1344,7 +1442,8 @@ model DespachoItem {
 model CuentaPagar {
   id              String             @id @default(cuid())
   empresaId       String
-  ordenCompraId   String
+  ordenCompraId   String?
+  deliveryTicketId String?
   tipo            TipoPago           @default(FACTURA)
   numeroFactura   String?
   fechaFactura    DateTime?
@@ -1355,13 +1454,15 @@ model CuentaPagar {
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
-  empresa     Empresa           @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  ordenCompra OrdenCompra       @relation(fields: [ordenCompraId], references: [id])
+  empresa        Empresa           @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  ordenCompra    OrdenCompra?      @relation(fields: [ordenCompraId], references: [id])
+  deliveryTicket DeliveryTicket?   @relation(fields: [deliveryTicketId], references: [id])
 
   pagos Pago[]
 
   @@index([empresaId])
   @@index([ordenCompraId])
+  @@index([deliveryTicketId])
   @@index([estado])
 }
 
@@ -1419,6 +1520,7 @@ model Egreso {
 
   @@index([empresaId])
   @@index([pagoId])
+  @@unique([empresaId, numero])
 }
 
 // ============================================================
@@ -1455,6 +1557,8 @@ model AsientoContable {
   updatedAt   DateTime      @updatedAt
 
   detalles AsientoDetalle[]
+
+  @@unique([empresaId, numero])
 }
 
 model AsientoDetalle {
@@ -1574,6 +1678,436 @@ model Notificacion {
   @@index([empresaId, usuarioId])
   @@index([empresaId, leida])
   @@index([usuarioId])
+}
+
+// ============================================================
+// MODULO OPERACIONES MARÍTIMAS - Programación Operativa
+// ============================================================
+
+model ProgramacionOperativa {
+  id              String             @id @default(cuid())
+  empresaId       String
+  numero          Int
+  fecha           DateTime           @default(now())
+  clienteId       String
+  agente          String?
+  puerto          String
+  lugarSuministro String?
+  motonave        String
+  imo             String?
+  bandera         String?
+  productoId      String
+  observaciones   String?
+  estado          EstadoProgramacion @default(BORRADOR)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cliente Cliente @relation(fields: [clienteId], references: [id])
+  producto Producto @relation(fields: [productoId], references: [id])
+
+  ordenes OrdenOperativa[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@index([empresaId, estado])
+  @@index([empresaId, clienteId])
+}
+
+// ============================================================
+// MODULO OPERACIONES MARÍTIMAS - Órdenes Operativas
+// ============================================================
+
+model OrdenOperativa {
+  id                    String                 @id @default(cuid())
+  empresaId             String
+  numero                Int
+  programacionId        String
+  clienteId             String
+  motonave              String
+  puerto                String
+  productoId            String
+  // Calidad
+  api               Decimal?             @db.Decimal(10, 2)
+  gravedadEspecifica Decimal?            @db.Decimal(10, 4)
+  densidad          Decimal?             @db.Decimal(10, 4)
+  viscosidad        Decimal?             @db.Decimal(10, 2)
+  azufre            Decimal?             @db.Decimal(10, 2)
+  agua              Decimal?             @db.Decimal(10, 2)
+  puntoChispa       Decimal?             @db.Decimal(10, 2)
+  temperatura       Decimal?             @db.Decimal(10, 2)
+  otrasPropiedades  String?
+  // Muestras
+  muestraRetenida       Boolean          @default(false)
+  muestraProveedor      String?
+  muestraMotonave       String?
+  muestraMarpol         Boolean          @default(false)
+  muestraMarpolInfo     String?
+  muestraOtra           String?
+  muestraClienteEstado  String?          @default("NO")
+  sello                 String?
+  estado                EstadoOrdenOperativa   @default(PENDIENTE)
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  empresa       Empresa              @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  programacion  ProgramacionOperativa @relation(fields: [programacionId], references: [id])
+  cliente       Cliente              @relation(fields: [clienteId], references: [id])
+  producto      Producto             @relation(fields: [productoId], references: [id])
+
+  asignaciones   RecursoAsignacion[]
+  deliveryTickets DeliveryTicket[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@index([empresaId, estado])
+  @@index([programacionId])
+}
+
+// ============================================================
+// MODULO OPERACIONES MARÍTIMAS - Recursos
+// ============================================================
+
+model Barcaza {
+  id          String  @id @default(cuid())
+  empresaId   String
+  nombre      String
+  capacidad   Decimal @db.Decimal(14, 2)
+  estado      String  @default("DISPONIBLE")
+  activo      Boolean @default(true)
+  createdAt   DateTime @default(now())
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  asignaciones RecursoAsignacion[]
+  deliveryTickets DeliveryTicket[]
+
+  @@unique([empresaId, nombre])
+  @@index([empresaId])
+}
+
+model Remolcador {
+  id         String  @id @default(cuid())
+  empresaId  String
+  nombre     String
+  matricula  String?
+  activo     Boolean @default(true)
+  createdAt  DateTime @default(now())
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  asignaciones RecursoAsignacion[]
+  deliveryTickets DeliveryTicket[]
+
+  @@unique([empresaId, nombre])
+  @@index([empresaId])
+}
+
+model Vehiculo {
+  id        String  @id @default(cuid())
+  empresaId String
+  placa     String
+  tipo      String  @default("CISTERNA")
+  activo    Boolean @default(true)
+  createdAt DateTime @default(now())
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  asignaciones RecursoAsignacion[]
+  deliveryTickets DeliveryTicket[]
+
+  @@unique([empresaId, placa])
+  @@index([empresaId])
+}
+
+model Conductor {
+  id         String  @id @default(cuid())
+  empresaId  String
+  nombre     String
+  documento  String?
+  licencia   String?
+  activo     Boolean @default(true)
+  createdAt  DateTime @default(now())
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  asignaciones RecursoAsignacion[]
+  deliveryTickets DeliveryTicket[]
+
+  @@unique([empresaId, documento])
+  @@index([empresaId])
+}
+
+model Capitan {
+  id        String  @id @default(cuid())
+  empresaId String
+  nombre    String
+  licencia  String?
+  activo    Boolean @default(true)
+  createdAt DateTime @default(now())
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  asignaciones RecursoAsignacion[]
+  deliveryTickets DeliveryTicket[]
+
+  @@unique([empresaId, nombre])
+  @@index([empresaId])
+}
+
+model RecursoAsignacion {
+  id                String   @id @default(cuid())
+  ordenOperativaId  String
+  barcazaId         String?
+  remolcadorId      String?
+  vehiculoId        String?
+  conductorId       String?
+  capitanId         String?
+  createdAt         DateTime @default(now())
+
+  ordenOperativa OrdenOperativa @relation(fields: [ordenOperativaId], references: [id], onDelete: Cascade)
+  barcaza        Barcaza?       @relation(fields: [barcazaId], references: [id])
+  remolcador     Remolcador?    @relation(fields: [remolcadorId], references: [id])
+  vehiculo       Vehiculo?      @relation(fields: [vehiculoId], references: [id])
+  conductor      Conductor?     @relation(fields: [conductorId], references: [id])
+  capitan        Capitan?       @relation(fields: [capitanId], references: [id])
+
+  @@unique([ordenOperativaId])
+  @@index([ordenOperativaId])
+}
+
+// ============================================================
+// MODULO OPERACIONES MARÍTIMAS - Delivery Ticket
+// ============================================================
+
+model DeliveryTicket {
+  id                String               @id @default(cuid())
+  empresaId         String
+  numero            Int
+  fecha             DateTime             @default(now())
+  clienteId         String
+  direccion         String?
+  ciudad            String?
+  agente            String?
+  motonave          String
+  imo               String?
+  bandera           String?
+  lugarSuministro   String?
+  tipoSuministro    String?               // BARGE | TRUCKS
+  puerto            String
+  productoId        String
+  cantidadEntregada Decimal              @default(0) @db.Decimal(14, 2)
+  unidadMedida      String               @default("MT")
+
+  // Recursos operativos
+  barcazaId         String?
+  capitanId         String?
+  remolcadorId      String?
+  vehiculoId        String?
+  conductorId       String?
+
+  // Sondeos
+  sondajeAntes            Decimal?       @db.Decimal(14, 2)
+  sondajeAntesRealizado   String?        // SI | NO
+  sondajeDespues          Decimal?       @db.Decimal(14, 2)
+  sondajeDespuesRealizado  String?       // SI | NO
+  sondajeTestificado      String?        // SI | NO
+
+  placas                String?               // Placas del vehículo (público)
+  conductorNombre       String?               // Nombre del conductor (público)
+  companiaEntrega       String?
+  verificadoPor         String?               // Quién verificó la cantidad de entrega
+  // Calidad
+  api                 Decimal?       @db.Decimal(14, 4)
+  gravedadEspecifica  Decimal?       @db.Decimal(14, 4)
+  densidad            Decimal?       @db.Decimal(14, 4)
+  viscosidad          Decimal?       @db.Decimal(14, 4)
+  azufre              Decimal?       @db.Decimal(14, 4)
+  agua                Decimal?       @db.Decimal(14, 4)
+  puntoChispa         Decimal?       @db.Decimal(14, 4)
+  temperatura         Decimal?       @db.Decimal(14, 4)
+  otrasPropiedades    String?
+
+  // Muestras
+  selloProveedor      String?
+  selloMotonave       String?
+  marpolAnnexVi       String?
+  otraMuestra         String?
+
+  observaciones         String?
+  estado                EstadoDeliveryTicket @default(BORRADOR)
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  empresa    Empresa    @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cliente    Cliente    @relation(fields: [clienteId], references: [id])
+  producto   Producto   @relation(fields: [productoId], references: [id])
+  barcaza    Barcaza?   @relation(fields: [barcazaId], references: [id])
+  capitan    Capitan?   @relation(fields: [capitanId], references: [id])
+  remolcador Remolcador? @relation(fields: [remolcadorId], references: [id])
+  vehiculo   Vehiculo?  @relation(fields: [vehiculoId], references: [id])
+  conductor  Conductor? @relation(fields: [conductorId], references: [id])
+
+  timeline   DeliveryTicketTimeline[]
+  evidencias DeliveryTicketEvidencia[]
+  firmas     DeliveryTicketFirma[]
+  ordenOperativa OrdenOperativa? @relation(fields: [ordenOperativaId], references: [id])
+  ordenOperativaId  String?
+  ventas     Venta[]
+  vehiculos  DeliveryTicketVehiculo[]
+  conductores DeliveryTicketConductor[]
+  cuentasPagar CuentaPagar[]
+  cuentasCobrar CuentaCobrar[]
+  facturas     FacturaDeliveryTicket[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@index([empresaId, estado])
+  @@index([empresaId, clienteId])
+}
+
+model FacturaDeliveryTicket {
+  id              String                    @id @default(cuid())
+  empresaId       String
+  deliveryTicketId String
+  numeroFactura   String?
+  valor           Decimal                   @db.Decimal(14, 2)
+  documentoUrl    String?
+  comprobanteUrl  String?
+  estado          EstadoFacturaDeliveryTicket @default(PENDIENTE)
+  observaciones   String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  empresa        Empresa        @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  deliveryTicket DeliveryTicket @relation(fields: [deliveryTicketId], references: [id])
+
+  @@index([empresaId])
+  @@index([deliveryTicketId])
+}
+
+model DeliveryTicketTimeline {
+  id             String   @id @default(cuid())
+  deliveryTicketId String
+  evento         String   // Barcaza atracada, Manguera conectada, Inicio bombeo, Fin bombeo, Barcaza liberada
+  fecha          DateTime @default(now())
+  hora           String?
+  usuarioId      String?
+  observacion    String?
+  createdAt      DateTime @default(now())
+
+  deliveryTicket DeliveryTicket @relation(fields: [deliveryTicketId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryTicketId])
+}
+
+model DeliveryTicketEvidencia {
+  id                String   @id @default(cuid())
+  deliveryTicketId  String
+  nombre            String
+  url               String
+  tipo              String   // IMAGEN, VIDEO, PDF, CERTIFICADO
+  tamaño            Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  deliveryTicket DeliveryTicket @relation(fields: [deliveryTicketId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryTicketId])
+}
+
+model DeliveryTicketFirma {
+  id                String   @id @default(cuid())
+  deliveryTicketId  String
+  rol               String   // REPRESENTANTE_PROVEEDOR, CAPITAN, JEFE_MAQUINAS
+  nombre            String
+  firma             String   // URL de la imagen de firma
+  sello             String?  // URL de la imagen del sello
+  fecha             DateTime @default(now())
+  createdAt         DateTime @default(now())
+
+  deliveryTicket DeliveryTicket @relation(fields: [deliveryTicketId], references: [id], onDelete: Cascade)
+
+  @@unique([deliveryTicketId, rol])
+  @@index([deliveryTicketId])
+}
+
+model DeliveryTicketVehiculo {
+  id              String   @id @default(cuid())
+  deliveryTicketId String
+  placa           String
+  createdAt       DateTime @default(now())
+
+  deliveryTicket DeliveryTicket @relation(fields: [deliveryTicketId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryTicketId])
+}
+
+model DeliveryTicketConductor {
+  id              String   @id @default(cuid())
+  deliveryTicketId String
+  nombre          String
+  createdAt       DateTime @default(now())
+
+  deliveryTicket DeliveryTicket @relation(fields: [deliveryTicketId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryTicketId])
+}
+
+// ============================================================
+// MODULO CUENTAS POR COBRAR
+// ============================================================
+
+model CuentaCobrar {
+  id               String             @id @default(cuid())
+  empresaId        String
+  ventaId          String
+  clienteId        String
+  deliveryTicketId String?
+  numeroFactura    String?
+  valor            Decimal            @db.Decimal(14, 2)
+  saldoPendiente   Decimal            @db.Decimal(14, 2)
+  fechaVencimiento DateTime?
+  documentoUrl     String?
+  comprobanteUrl   String?
+  observaciones    String?
+  estado           EstadoCuentaCobrar @default(PENDIENTE)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  empresa        Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  venta          Venta           @relation(fields: [ventaId], references: [id])
+  cliente        Cliente         @relation(fields: [clienteId], references: [id])
+  deliveryTicket DeliveryTicket? @relation(fields: [deliveryTicketId], references: [id])
+
+  recibos ReciboCaja[]
+
+  @@unique([empresaId, ventaId])
+  @@index([empresaId])
+  @@index([empresaId, estado])
+  @@index([empresaId, clienteId])
+  @@index([empresaId, deliveryTicketId])
+}
+
+model ReciboCaja {
+  id             String           @id @default(cuid())
+  empresaId      String
+  numero         Int
+  cuentaCobrarId String
+  clienteId      String
+  fecha          DateTime         @default(now())
+  monto          Decimal          @db.Decimal(14, 2)
+  metodo         String           @default("TRANSFERENCIA")
+  referencia     String?
+  observaciones  String?
+  documentoUrl   String?
+  comprobanteUrl String?
+  estado         EstadoReciboCaja @default(PENDIENTE)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  empresa     Empresa      @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cuentaCobrar CuentaCobrar @relation(fields: [cuentaCobrarId], references: [id])
+  cliente     Cliente      @relation(fields: [clienteId], references: [id])
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@index([empresaId, cuentaCobrarId])
+  @@index([empresaId, estado])
 }
 
 // ============================================================
@@ -1715,4 +2249,67 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+model CodigoAprobacion {
+  id          String   @id @default(cuid())
+  empresaId   String
+  codigo      String   @unique
+  descripcion String?
+  activo      Boolean  @default(true)
+  usado       Boolean  @default(false)
+  usadoEn     String?
+  usadoFecha  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  empresa Empresa @relation(fields: [empresaId], references: [id])
+
+  @@index([empresaId])
+  @@index([codigo])
+}
+
+model Automatizacion {
+  id               String   @id @default(cuid())
+  empresaId        String
+  codigo           String
+  nombre           String
+  descripcion      String?
+  modulo           String
+  evento           String
+  urlPowerAutomate String
+  metodoHTTP       String   @default("POST")
+  activo           Boolean  @default(true)
+  token            String   @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  empresa    Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  auditorias AutomatizacionAuditoria[]
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+}
+
+model AutomatizacionAuditoria {
+  id                String   @id @default(cuid())
+  empresaId         String
+  automatizacionId  String
+  codigoEvento      String
+  entidadTipo       String
+  entidadId         String
+  usuarioId         String?
+  respuestaHTTP     Int?
+  tiempoEjecucionMs Int?
+  mensajeError      String?
+  payloadEnviado    Json?
+  createdAt         DateTime @default(now())
+
+  empresa        Empresa        @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  automatizacion Automatizacion @relation(fields: [automatizacionId], references: [id], onDelete: Cascade)
+  usuario        Usuario?       @relation(fields: [usuarioId], references: [id])
+
+  @@index([empresaId])
+  @@index([automatizacionId])
+  @@index([createdAt])
 }

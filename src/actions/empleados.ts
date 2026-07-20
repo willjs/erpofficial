@@ -5,6 +5,7 @@ import { verifySession } from "@/lib/dal"
 import { verificarPermiso } from "@/lib/permisos"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
+import { AutomationService } from "@/lib/automation-service"
 
 function serialize<T>(data: T): T {
   return JSON.parse(JSON.stringify(data))
@@ -122,6 +123,14 @@ export async function createEmpleado(input: CreateEmpleadoInput) {
       departamento: validated.departamento || null,
     },
   })
+
+  AutomationService.ejecutarEvento({
+    empresaId,
+    codigoEvento: "EMPLEADO_CREADO",
+    entidadTipo: "EMPLEADO",
+    entidadId: data.id,
+    usuarioId: userId,
+  }).catch(() => {})
 
   revalidatePath("/empleados")
   return serialize(data)

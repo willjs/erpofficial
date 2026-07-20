@@ -43,4 +43,12 @@ next-env.d.ts
 /src/generated/prisma
 /backups/
 /oficina_db.sql
-/proxy.ts
+# proxy.ts is committed — it's now part of the app security layer
+
+# uploads (user-generated files)
+/public/uploads/
+
+# temp / debug files
+server_error.txt
+server_output.txt
+test-transaction.ts

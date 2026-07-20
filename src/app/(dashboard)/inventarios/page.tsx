@@ -522,74 +522,74 @@ export default function InventariosPage() {
       <PageHeader title="Inventarios" description="Gestión de productos, stock y movimientos de inventario" />
 
       <Tabs.Root value={tab} onValueChange={setTab} className="space-y-4">
-        <Tabs.List className="flex gap-1 border-b">
-          <Tabs.Trigger value="productos" className="flex items-center gap-2 px-4 py-2 text-sm data-[state=active]:border-b-2 data-[state=active]:border-primary">
+        <Tabs.List className="flex gap-1 border-b overflow-x-auto">
+          <Tabs.Trigger value="productos" className="flex items-center gap-2 px-4 py-2 text-sm whitespace-nowrap data-[state=active]:border-b-2 data-[state=active]:border-primary">
             <Package className="h-4 w-4" /> Productos
           </Tabs.Trigger>
-          <Tabs.Trigger value="almacenes" className="flex items-center gap-2 px-4 py-2 text-sm data-[state=active]:border-b-2 data-[state=active]:border-primary">
+          <Tabs.Trigger value="almacenes" className="flex items-center gap-2 px-4 py-2 text-sm whitespace-nowrap data-[state=active]:border-b-2 data-[state=active]:border-primary">
             <Warehouse className="h-4 w-4" /> Almacenes
           </Tabs.Trigger>
-          <Tabs.Trigger value="stock" className="flex items-center gap-2 px-4 py-2 text-sm data-[state=active]:border-b-2 data-[state=active]:border-primary">
+          <Tabs.Trigger value="stock" className="flex items-center gap-2 px-4 py-2 text-sm whitespace-nowrap data-[state=active]:border-b-2 data-[state=active]:border-primary">
             <Settings className="h-4 w-4" /> Stock
           </Tabs.Trigger>
-          <Tabs.Trigger value="movimientos" className="flex items-center gap-2 px-4 py-2 text-sm data-[state=active]:border-b-2 data-[state=active]:border-primary">
+          <Tabs.Trigger value="movimientos" className="flex items-center gap-2 px-4 py-2 text-sm whitespace-nowrap data-[state=active]:border-b-2 data-[state=active]:border-primary">
             <ArrowRightLeft className="h-4 w-4" /> Movimientos
           </Tabs.Trigger>
         </Tabs.List>
 
         <Tabs.Content value="productos" className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
             <Input
               placeholder="Buscar producto..."
-              className="max-w-xs"
+              className="w-full sm:max-w-xs"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setTab("movimientos")}>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button variant="outline" onClick={() => setTab("movimientos")} className="w-full sm:w-auto">
                 <ArrowRightLeft className="mr-2 h-4 w-4" /> Registrar Movimiento
               </Button>
-              <Button variant="outline" onClick={openImportDialog}>
+              <Button variant="outline" onClick={openImportDialog} className="w-full sm:w-auto">
                 <Upload className="mr-2 h-4 w-4" /> Importar Excel
               </Button>
-              <Button onClick={openCreateProducto}>
+              <Button onClick={openCreateProducto} className="w-full sm:w-auto">
                 <Plus className="mr-2 h-4 w-4" /> Nuevo Producto
               </Button>
             </div>
           </div>
-          <DataTable columns={prodColumns} data={productosFiltrados} loading={loading} />
+          <DataTable columns={prodColumns} data={productosFiltrados} loading={loading} mobileCardTitle={(p) => <><span className="font-mono">{p.codigo}</span> — {p.nombre}</>} />
         </Tabs.Content>
 
         <Tabs.Content value="almacenes" className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <span className="text-sm text-muted-foreground">{almacenes.length} almacenes</span>
-            <Button onClick={openCreateAlmacen}>
+            <Button onClick={openCreateAlmacen} className="w-full sm:w-auto">
               <Plus className="mr-2 h-4 w-4" /> Nuevo Almacén
             </Button>
           </div>
-          <DataTable columns={almColumns} data={almacenes} loading={loading} />
+          <DataTable columns={almColumns} data={almacenes} loading={loading} mobileCardTitle={(a) => <><span className="font-mono">{a.codigo}</span> — {a.nombre}</>} />
         </Tabs.Content>
 
         <Tabs.Content value="stock" className="space-y-4">
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">{stock.length} registros</span>
           </div>
-          <DataTable columns={stockColumns} data={stock} loading={loading} />
+          <DataTable columns={stockColumns} data={stock} loading={loading} mobileCardTitle={(s) => <>{s.producto.codigo} — {s.producto.nombre} <span className="text-muted-foreground">({s.almacen.nombre})</span></>} />
         </Tabs.Content>
 
         <Tabs.Content value="movimientos" className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <span className="text-sm text-muted-foreground">{movimientos.length} movimientos</span>
-            <div className="flex gap-2">
-              <Button onClick={() => openMovDialog("ENTRADA")}>
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+              <Button onClick={() => openMovDialog("ENTRADA")} className="w-full sm:w-auto">
                 <Plus className="mr-2 h-4 w-4" /> Ingreso
               </Button>
-              <Button variant="destructive" onClick={() => openMovDialog("SALIDA")}>
+              <Button variant="destructive" onClick={() => openMovDialog("SALIDA")} className="w-full sm:w-auto">
                 <ArrowRightLeft className="mr-2 h-4 w-4" /> Salida
               </Button>
             </div>
           </div>
-          <DataTable columns={movColumns} data={movimientos} loading={loading} />
+          <DataTable columns={movColumns} data={movimientos} loading={loading} mobileCardTitle={(m) => <>{m.tipo === "ENTRADA" ? "⬆ Ingreso" : "⬇ Salida"} — {m.producto.codigo} {m.producto.nombre}</>} />
         </Tabs.Content>
       </Tabs.Root>
 

@@ -9,6 +9,8 @@ import { writeFile, mkdir } from "node:fs/promises"
 import path from "node:path"
 import { generarAsiento } from "./motor-contable"
 import { notificarPorPermiso } from "./notificaciones"
+import { uuid } from "@/lib/utils"
+import { AutomationService } from "@/lib/automation-service"
 
 function serializar(obj: unknown): unknown {
   if (obj == null || typeof obj !== "object") return obj
@@ -156,6 +158,7 @@ const proveedorSchema = z.object({
   contacto: z.string().nullable().optional(),
   telefono: z.string().nullable().optional(),
   email: z.string().nullable().optional(),
+  emailFactura: z.string().nullable().optional(),
   direccion: z.string().nullable().optional(),
 })
 
@@ -170,30 +173,59 @@ export async function getProveedores(soloActivos = true) {
   })
 }
 
-export async function createProveedor(data: ProveedorFormData) {
+export async function createProveedor(data: ProveedorFormData & { archivos?: { nombre: string; base64: string }[] }) {
   const { empresaId, userId } = await verifySession()
   await verificarPermiso(userId, { recurso: "proveedor", accion: "CREATE" })
   const validated = proveedorSchema.parse(data)
   const existingNIT = await prisma.proveedor.findFirst({ where: { empresaId, nit: validated.nit, activo: true } })
   if (existingNIT) throw new Error("Ya existe un proveedor activo con ese NIT")
+
+  const archivos: { nombre: string; url: string; tamaño: number }[] = []
+  if (data.archivos?.length) {
+    for (const f of data.archivos) {
+      if (f.base64) {
+        const saved = await saveFile(f, empresaId)
+        if (saved) archivos.push(saved)
+      }
+    }
+  }
+
   const prov = await prisma.proveedor.create({
-    data: { empresaId, ...validated, contacto: validated.contacto ?? null, telefono: validated.telefono ?? null, email: validated.email ?? null, direccion: validated.direccion ?? null },
+    data: { empresaId, ...validated, contacto: validated.contacto ?? null, telefono: validated.telefono ?? null, email: validated.email ?? null, emailFactura: validated.emailFactura ?? null, direccion: validated.direccion ?? null, archivos: archivos.length > 0 ? archivos : undefined },
   })
   revalidatePath("/compras")
+  revalidatePath("/proveedores")
   return prov
 }
 
-export async function updateProveedor(id: string, data: ProveedorFormData) {
+export async function updateProveedor(id: string, data: ProveedorFormData & { archivos?: { nombre: string; base64: string }[] }) {
   const { empresaId, userId } = await verifySession()
   await verificarPermiso(userId, { recurso: "proveedor", accion: "UPDATE" })
   const validated = proveedorSchema.parse(data)
   const existingNIT = await prisma.proveedor.findFirst({ where: { empresaId, nit: validated.nit, activo: true, id: { not: id } } })
   if (existingNIT) throw new Error("Ya existe otro proveedor activo con ese NIT")
+
+  const existing = await prisma.proveedor.findUnique({ where: { id, empresaId }, select: { archivos: true } })
+  const archivosExistentes: { nombre: string; url: string; tamaño: number }[] = existing?.archivos ? (existing.archivos as any[]) : []
+
+  const nuevosArchivos: { nombre: string; url: string; tamaño: number }[] = []
+  if (data.archivos?.length) {
+    for (const f of data.archivos) {
+      if (f.base64) {
+        const saved = await saveFile(f, empresaId)
+        if (saved) nuevosArchivos.push(saved)
+      }
+    }
+  }
+
+  const archivos = [...archivosExistentes, ...nuevosArchivos]
+
   const prov = await prisma.proveedor.update({
     where: { id, empresaId },
-    data: { ...validated, contacto: validated.contacto ?? null, telefono: validated.telefono ?? null, email: validated.email ?? null, direccion: validated.direccion ?? null },
+    data: { ...validated, contacto: validated.contacto ?? null, telefono: validated.telefono ?? null, email: validated.email ?? null, emailFactura: validated.emailFactura ?? null, direccion: validated.direccion ?? null, archivos: archivos.length > 0 ? archivos : [] },
   })
   revalidatePath("/compras")
+  revalidatePath("/proveedores")
   return prov
 }
 
@@ -205,6 +237,22 @@ export async function deleteProveedor(id: string) {
     data: { activo: false },
   })
   revalidatePath("/compras")
+  revalidatePath("/proveedores")
+}
+
+export async function deleteProveedorArchivo(proveedorId: string, url: string) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "proveedor", accion: "UPDATE" })
+  const prov = await prisma.proveedor.findUnique({ where: { id: proveedorId, empresaId }, select: { archivos: true } })
+  if (!prov) throw new Error("Proveedor no encontrado")
+  const archivos: { nombre: string; url: string; tamaño: number }[] = prov.archivos ? (prov.archivos as any[]) : []
+  const filtrados = archivos.filter((a) => a.url !== url)
+  await prisma.proveedor.update({
+    where: { id: proveedorId, empresaId },
+    data: { archivos: filtrados.length > 0 ? filtrados : [] },
+  })
+  revalidatePath("/proveedores")
+  return true
 }
 
 // ─── Requisiciones ────────────────────────────────────────
@@ -265,7 +313,6 @@ export async function getRequisicion(id: string) {
       items: { include: { centroCostos: true }, orderBy: { item: "asc" } },
       cotizaciones: { include: { proveedor: true, items: true }, orderBy: { fecha: "desc" } },
       ordenesCompra: { include: { proveedor: true }, orderBy: { fecha: "desc" } },
-      aprobaciones: { include: { usuario: true }, orderBy: { createdAt: "desc" } },
     },
   })
   if (!data) throw new Error("Requisición no encontrada")
@@ -321,6 +368,14 @@ export async function createRequisicion(data: RequisicionFormData) {
     descripcion: "Requisición creada",
     usuarioId: userId,
   })
+
+  AutomationService.ejecutarEvento({
+    empresaId,
+    codigoEvento: "REQUISICION_CREADA",
+    entidadTipo: "REQUISICION",
+    entidadId: req.id,
+    usuarioId: userId,
+  }).catch(() => {})
 
   revalidatePath("/compras")
   return serializeRequisicion(req)
@@ -378,79 +433,33 @@ export async function deleteRequisicion(id: string) {
 
 export async function enviarRequisicion(id: string) {
   const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "requisicion", accion: "UPDATE" })
+  await verificarPermiso(userId, { recurso: "requisicion", accion: "ENVIAR" })
   const existing = await prisma.requisicion.findFirst({ where: { id, empresaId } })
   if (!existing) throw new Error("Requisición no encontrada")
   if (existing.estado !== "BORRADOR") throw new Error("La requisición debe estar en borrador")
 
   await prisma.requisicion.update({
     where: { id },
-    data: { estado: "PENDIENTE_APROBACION" },
+    data: { estado: "EN_COTIZACION" },
   })
-
-  // Auto-crear niveles de aprobación según AprobacionConfig
-  const configs = await prisma.aprobacionConfig.findMany({
-    where: { empresaId },
-    orderBy: { desde: "asc" },
-  })
-
-  for (let i = 0; i < configs.length; i++) {
-    const cfg = configs[i]
-    await prisma.aprobacion.create({
-      data: {
-        empresaId,
-        requisicionId: id,
-        tipo: "REQUISICION",
-        nivel: i + 1,
-        estado: "PENDIENTE",
-      },
-    })
-    await notificarPorPermiso({
-      empresaId,
-      tipo: "APROBACION_PENDIENTE",
-      titulo: "Requisición pendiente de aprobación",
-      mensaje: `La requisición #${existing.numero} está esperando aprobación`,
-      referenciaId: id,
-      referenciaTipo: "REQUISICION",
-      recurso: "requisicion",
-      accion: "UPDATE",
-    })
-  }
 
   await registrarHistorial({
     empresaId,
     entidadTipo: "REQUISICION",
     entidadId: id,
     estadoAnterior: "BORRADOR",
-    estadoNuevo: "PENDIENTE_APROBACION",
-    descripcion: "Enviada para aprobación",
+    estadoNuevo: "EN_COTIZACION",
+    descripcion: "Enviada a cotización",
     usuarioId: userId,
   })
 
-  revalidatePath("/compras")
-}
-
-export async function reenviarRequisicion(id: string) {
-  const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "requisicion", accion: "UPDATE" })
-  const existing = await prisma.requisicion.findFirst({ where: { id, empresaId } })
-  if (!existing) throw new Error("Requisición no encontrada")
-  if (existing.estado !== "RECHAZADA") throw new Error("Solo se puede reenviar requisiciones rechazadas")
-
-  await prisma.requisicion.update({
-    where: { id },
-    data: { estado: "BORRADOR" },
-  })
-
-  await registrarHistorial({
+  AutomationService.ejecutarEvento({
     empresaId,
+    codigoEvento: "REQUISICION_ENVIADA",
     entidadTipo: "REQUISICION",
     entidadId: id,
-    estadoAnterior: "RECHAZADA",
-    estadoNuevo: "BORRADOR",
-    descripcion: "Reenviada para corrección",
     usuarioId: userId,
-  })
+  }).catch(() => {})
 
   revalidatePath("/compras")
 }
@@ -492,6 +501,9 @@ const cotizacionItemSchema = z.object({
   cantidad: z.coerce.number().positive(),
   valorUnitario: z.coerce.number().min(0),
   valorTotal: z.coerce.number().min(0),
+  valorProveedor1: z.coerce.number().min(0).nullable().optional(),
+  valorProveedor2: z.coerce.number().min(0).nullable().optional(),
+  valorProveedor3: z.coerce.number().min(0).nullable().optional(),
 })
 
 const cotizacionSchema = z.object({
@@ -539,9 +551,12 @@ export async function createCotizacion(data: CotizacionFormData & { archivos?: {
     select: { estado: true },
   })
   if (!reqCheck) throw new Error("Requisición no encontrada")
-  if (!["APROBADA", "EN_COTIZACION"].includes(reqCheck.estado)) throw new Error("La requisición debe estar aprobada o en cotización para agregar cotizaciones")
+  if (reqCheck.estado !== "EN_COTIZACION") throw new Error("La requisición debe estar en cotización para agregar cotizaciones")
 
-  const valorTotal = validated.items.reduce((s, i) => s + i.valorTotal, 0)
+  const proveedorExists = await prisma.proveedor.findFirst({ where: { id: validated.proveedorId, empresaId }, select: { id: true } })
+  if (!proveedorExists) throw new Error("Proveedor no encontrado o no pertenece a esta empresa")
+
+  const valorTotal = validated.items.reduce((s, i) => s + (Number(i.cantidad) * Number(i.valorProveedor1 ?? 0)), 0)
 
   const archivos: { nombre: string; url: string; tamaño: number }[] = []
   if (data.archivos?.length) {
@@ -570,8 +585,11 @@ export async function createCotizacion(data: CotizacionFormData & { archivos?: {
           descripcion: i.descripcion,
           unidadMedida: i.unidadMedida,
           cantidad: i.cantidad,
-          valorUnitario: i.valorUnitario,
-          valorTotal: i.valorTotal,
+          valorUnitario: Number(i.valorUnitario),
+          valorTotal: Number(i.valorTotal),
+          valorProveedor1: i.valorProveedor1 ?? null,
+          valorProveedor2: i.valorProveedor2 ?? null,
+          valorProveedor3: i.valorProveedor3 ?? null,
         })),
       },
     },
@@ -651,7 +669,7 @@ export async function updateCotizacion(id: string, data: CotizacionFormData & { 
   const existing = await prisma.cotizacion.findFirst({ where: { id, empresaId } })
   if (!existing) throw new Error("Cotización no encontrada")
 
-  const valorTotal = validated.items.reduce((s, i) => s + i.valorTotal, 0)
+  const valorTotal = validated.items.reduce((s, i) => s + (Number(i.cantidad) * Number(i.valorProveedor1 ?? 0)), 0)
 
   const archivos: { nombre: string; url: string; tamaño: number }[] = []
   if (data.archivos?.length) {
@@ -681,8 +699,11 @@ export async function updateCotizacion(id: string, data: CotizacionFormData & { 
             descripcion: i.descripcion,
             unidadMedida: i.unidadMedida,
             cantidad: i.cantidad,
-            valorUnitario: i.valorUnitario,
-            valorTotal: i.valorTotal,
+            valorUnitario: Number(i.valorUnitario),
+            valorTotal: Number(i.valorTotal),
+            valorProveedor1: i.valorProveedor1 ?? null,
+            valorProveedor2: i.valorProveedor2 ?? null,
+            valorProveedor3: i.valorProveedor3 ?? null,
           })),
         },
       },
@@ -724,7 +745,7 @@ export async function deleteCotizacion(id: string) {
 
 export async function seleccionarCotizacion(id: string) {
   const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "cotizacion", accion: "UPDATE" })
+  await verificarPermiso(userId, { recurso: "cotizacion", accion: "APROBAR" })
 
   const cotizacion = await prisma.cotizacion.findFirst({
     where: { id, empresaId },
@@ -750,186 +771,6 @@ export async function seleccionarCotizacion(id: string) {
     descripcion: "Cotización seleccionada como ganadora",
     usuarioId: userId,
     referenciaId: cotizacion.requisicionId,
-  })
-
-  revalidatePath("/compras")
-}
-
-// ─── Aprobaciones ─────────────────────────────────────────
-
-export async function getAprobacionesPendientes() {
-  const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "requisicion", accion: "READ" })
-  const reqs = await prisma.requisicion.findMany({
-    where: { empresaId, estado: "PENDIENTE_APROBACION" },
-    include: {
-      items: true,
-      _count: { select: { cotizaciones: true } },
-    },
-    orderBy: { fecha: "desc" },
-  })
-  return reqs.map(serializeRequisicion)
-}
-
-export async function getAprobacionConfig() {
-  const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "requisicion", accion: "READ" })
-  const data = await prisma.aprobacionConfig.findMany({
-    where: { empresaId },
-    orderBy: { desde: "asc" },
-  })
-  return data.map((c) => ({
-    ...c,
-    desde: Number(c.desde),
-    hasta: Number(c.hasta),
-  }))
-}
-
-const aprobacionConfigSchema = z.object({
-  desde: z.coerce.number().min(0),
-  hasta: z.coerce.number().min(0),
-  cargoAprobador: z.string().min(1, "Cargo requerido"),
-})
-
-export type AprobacionConfigFormData = z.infer<typeof aprobacionConfigSchema>
-
-export async function createAprobacionConfig(data: AprobacionConfigFormData) {
-  const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "requisicion", accion: "CREATE" })
-  const validated = aprobacionConfigSchema.parse(data)
-  const config = await prisma.aprobacionConfig.create({
-    data: { empresaId, ...validated },
-  })
-  revalidatePath("/compras")
-  return config
-}
-
-export async function deleteAprobacionConfig(id: string) {
-  const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "requisicion", accion: "DELETE" })
-  await prisma.aprobacionConfig.delete({ where: { id, empresaId } })
-  revalidatePath("/compras")
-}
-
-export async function aprobarRequisicion(requisicionId: string, comentarios?: string) {
-  const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "requisicion", accion: "UPDATE" })
-
-  const req = await prisma.requisicion.findFirst({
-    where: { id: requisicionId, empresaId },
-    include: { aprobaciones: { where: { estado: "PENDIENTE" }, orderBy: { nivel: "asc" } } },
-  })
-  if (!req) throw new Error("Requisición no encontrada")
-  if (req.estado !== "PENDIENTE_APROBACION") throw new Error("No está pendiente de aprobación")
-
-  // Verificar si hay aprobaciones por niveles
-  const pendientes = req.aprobaciones.filter((a) => a.estado === "PENDIENTE")
-  const siguientePendiente = pendientes[0]
-
-  if (siguientePendiente) {
-    // Aprobar este nivel
-    await prisma.aprobacion.update({
-      where: { id: siguientePendiente.id },
-      data: { estado: "APROBADA", aprobadoPor: userId, fechaAccion: new Date(), comentarios: comentarios ?? null },
-    })
-
-    // Si era el último nivel, aprobar la requisición
-    const restantes = await prisma.aprobacion.count({
-      where: { requisicionId, estado: "PENDIENTE" },
-    })
-
-    if (restantes === 0) {
-      await prisma.requisicion.update({
-        where: { id: requisicionId },
-        data: { estado: "APROBADA" },
-      })
-    }
-  } else {
-    // Sin configuración de niveles, aprobación directa
-    await prisma.aprobacion.create({
-      data: {
-        empresaId,
-        requisicionId,
-        tipo: "REQUISICION",
-        estado: "APROBADA",
-        aprobadoPor: userId,
-        fechaAccion: new Date(),
-        comentarios,
-      },
-    })
-    await prisma.requisicion.update({
-      where: { id: requisicionId },
-      data: { estado: "APROBADA" },
-    })
-  }
-
-  // Notificar al solicitante
-  await crearNotificacion({
-    empresaId,
-    usuarioId: req.areaSolicitante ? undefined : null,
-    tipo: "REQUISICION_APROBADA",
-    titulo: "Requisición aprobada",
-    mensaje: `La requisición #${req.numero} ha sido aprobada${comentarios ? `: ${comentarios}` : ""}`,
-    referenciaId: requisicionId,
-    referenciaTipo: "REQUISICION",
-  })
-
-  await registrarHistorial({
-    empresaId,
-    entidadTipo: "REQUISICION",
-    entidadId: requisicionId,
-    estadoAnterior: "PENDIENTE_APROBACION",
-    estadoNuevo: "APROBADA",
-    descripcion: comentarios || "Aprobada",
-    usuarioId: userId,
-  })
-
-  revalidatePath("/compras")
-}
-
-export async function rechazarRequisicion(requisicionId: string, comentarios?: string) {
-  const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "requisicion", accion: "UPDATE" })
-
-  const req = await prisma.requisicion.findFirst({ where: { id: requisicionId, empresaId } })
-  if (!req) throw new Error("Requisición no encontrada")
-  if (req.estado !== "PENDIENTE_APROBACION") throw new Error("No está pendiente de aprobación")
-
-  await prisma.$transaction([
-    prisma.aprobacion.create({
-      data: {
-        empresaId,
-        requisicionId,
-        tipo: "REQUISICION",
-        estado: "RECHAZADA",
-        aprobadoPor: userId,
-        fechaAccion: new Date(),
-        comentarios,
-      },
-    }),
-    prisma.requisicion.update({
-      where: { id: requisicionId },
-      data: { estado: "RECHAZADA" },
-    }),
-  ])
-
-  await crearNotificacion({
-    empresaId,
-    tipo: "REQUISICION_RECHAZADA",
-    titulo: "Requisición rechazada",
-    mensaje: `La requisición #${req.numero} fue rechazada${comentarios ? `: ${comentarios}` : ""}`,
-    referenciaId: requisicionId,
-    referenciaTipo: "REQUISICION",
-  })
-
-  await registrarHistorial({
-    empresaId,
-    entidadTipo: "REQUISICION",
-    entidadId: requisicionId,
-    estadoAnterior: "PENDIENTE_APROBACION",
-    estadoNuevo: "RECHAZADA",
-    descripcion: comentarios || "Rechazada",
-    usuarioId: userId,
   })
 
   revalidatePath("/compras")
@@ -965,6 +806,7 @@ const ordenCompraSchema = z.object({
     cantidad: z.coerce.number().positive(),
     valorUnitario: z.coerce.number().min(0),
     valorTotal: z.coerce.number().min(0),
+    tipoIva: z.enum(["EXENTO", "IVA_5", "IVA_19"]).optional().default("EXENTO"),
   })).min(1),
 })
 
@@ -985,7 +827,11 @@ export async function generarOrdenCompra(data: OrdenCompraFormData) {
 
   const subtotal = validated.items.reduce((s, i) => s + i.valorTotal, 0)
   const descuento = 0
-  const iva = validated.aplicaIVA ? Math.round(subtotal * 0.16 * 100) / 100 : 0
+  const iva = validated.items.reduce((s, i) => {
+    const base = i.valorTotal
+    const tasa = i.tipoIva === "IVA_19" ? 0.19 : i.tipoIva === "IVA_5" ? 0.05 : 0
+    return s + Math.round(base * tasa * 100) / 100
+  }, 0)
   const valorTotal = subtotal - descuento + iva
 
   const oc = await prisma.ordenCompra.create({
@@ -1016,6 +862,7 @@ export async function generarOrdenCompra(data: OrdenCompraFormData) {
           cantidad: i.cantidad,
           valorUnitario: i.valorUnitario,
           valorTotal: i.valorTotal,
+          tipoIva: i.tipoIva,
         })),
       },
     },
@@ -1069,6 +916,14 @@ export async function generarOrdenCompra(data: OrdenCompraFormData) {
     recurso: "orden_compra",
     accion: "READ",
   })
+
+  AutomationService.ejecutarEvento({
+    empresaId,
+    codigoEvento: "OC_CREADA",
+    entidadTipo: "ORDEN_COMPRA",
+    entidadId: oc.id,
+    usuarioId: userId,
+  }).catch(() => {})
 
   revalidatePath("/compras")
   return serializar({
@@ -1133,7 +988,6 @@ export async function getOrdenCompra(id: string) {
         orderBy: { fechaRecepcion: "desc" },
       },
       cuentasPagar: true,
-      aprobaciones: { include: { usuario: true }, orderBy: { createdAt: "desc" } },
     },
   })
   if (!oc) throw new Error("Orden de compra no encontrada")
@@ -1164,7 +1018,12 @@ export async function updateOrdenCompra(id: string, data: OrdenCompraFormData) {
 
   const subtotal = validated.items.reduce((s, i) => s + i.valorTotal, 0)
   const descuento = existing.descuento
-  const iva = validated.aplicaIVA ? Math.round(subtotal * 0.16 * 100) / 100 : 0
+  const iva = validated.items.reduce((s, i) => {
+    const base = i.valorTotal
+    const tipoIva = (i as any).tipoIva || "EXENTO"
+    const tasa = tipoIva === "IVA_19" ? 0.19 : tipoIva === "IVA_5" ? 0.05 : 0
+    return s + Math.round(base * tasa * 100) / 100
+  }, 0)
   const valorTotal = subtotal - Number(descuento) + iva
 
   const oc = await prisma.$transaction(async (tx: any) => {
@@ -1191,6 +1050,7 @@ export async function updateOrdenCompra(id: string, data: OrdenCompraFormData) {
             cantidad: i.cantidad,
             valorUnitario: i.valorUnitario,
             valorTotal: i.valorTotal,
+            tipoIva: (i as any).tipoIva || "EXENTO",
           })),
         },
       },
@@ -1441,9 +1301,20 @@ export async function getCuentasPagar() {
   const { empresaId, userId } = await verifySession()
   await verificarPermiso(userId, { recurso: "cuenta_pagar", accion: "READ" })
   const data = await prisma.cuentaPagar.findMany({
-    where: { empresaId },
+    where: { empresaId, deliveryTicketId: null },
     include: {
-      ordenCompra: { include: { proveedor: true } },
+      ordenCompra: {
+        include: {
+          proveedor: true,
+          items: { orderBy: { item: "asc" } },
+          cotizacion: {
+            include: {
+              proveedor: { select: { razonSocial: true } },
+              items: { orderBy: { item: "asc" } },
+            },
+          },
+        },
+      },
       _count: { select: { pagos: true } },
     },
     orderBy: { createdAt: "desc" },
@@ -1514,12 +1385,20 @@ export async function crearCuentaPagar(ordenCompraId: string, numeroFactura?: st
     empresaId,
     tipo: "CUENTA_PAGAR_CREADA",
     titulo: "Cuenta por pagar registrada",
-    mensaje: `Factura ${numeroFactura || "sin número"} por ${Number(oc.valorTotal).toLocaleString("es-CO")} de ${cp.ordenCompra.proveedor.razonSocial}`,
+    mensaje: `Factura ${numeroFactura || "sin número"} por ${Number(oc.valorTotal).toLocaleString("es-CO")} de ${cp.ordenCompra?.proveedor?.razonSocial ?? ""}`,
     referenciaId: cp.id,
     referenciaTipo: "CUENTA_PAGAR",
     recurso: "cuenta_pagar",
     accion: "READ",
   })
+
+  AutomationService.ejecutarEvento({
+    empresaId,
+    codigoEvento: "FACTURA_REGISTRADA",
+    entidadTipo: "CUENTA_PAGAR",
+    entidadId: cp.id,
+    usuarioId: userId,
+  }).catch(() => {})
 
   revalidatePath("/compras")
   revalidatePath("/tesoreria")
@@ -1565,7 +1444,7 @@ export async function getDashboardCompras() {
     gastoPorArea,
     gastoPorProveedor,
   ] = await Promise.all([
-    prisma.requisicion.count({ where: { empresaId, estado: "PENDIENTE_APROBACION" } }),
+    prisma.requisicion.count({ where: { empresaId, estado: "BORRADOR" } }),
     prisma.requisicion.count({ where: { empresaId, estado: { not: "BORRADOR" } } }),
     prisma.requisicion.count({ where: { empresaId, estado: "EN_COTIZACION" } }),
     prisma.ordenCompra.count({ where: { empresaId } }),
@@ -1597,7 +1476,7 @@ export async function getDashboardCompras() {
 
 export async function enviarATesoreria(cuentaPagarId: string) {
   const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "cuenta_pagar", accion: "UPDATE" })
+  await verificarPermiso(userId, { recurso: "cuenta_pagar", accion: "ENVIAR" })
 
   const cp = await prisma.cuentaPagar.findFirst({
     where: { id: cuentaPagarId, empresaId },
@@ -1624,9 +1503,9 @@ export async function enviarATesoreria(cuentaPagarId: string) {
   revalidatePath("/compras")
 }
 
-export async function pagarCuenta(cuentaPagarId: string, cuentaBancariaId: string, comprobante?: { nombre: string; base64: string } | null) {
+export async function pagarCuenta(cuentaPagarId: string, cuentaBancariaId: string, numeroFactura?: string, comprobante?: { nombre: string; base64: string } | null) {
   const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "pago", accion: "CREATE" })
+  await verificarPermiso(userId, { recurso: "pago", accion: "APROBAR" })
 
   const cp = await prisma.cuentaPagar.findFirst({
     where: { id: cuentaPagarId, empresaId },
@@ -1634,14 +1513,16 @@ export async function pagarCuenta(cuentaPagarId: string, cuentaBancariaId: strin
   })
   if (!cp) throw new Error("Cuenta por pagar no encontrada")
   if (cp.estado !== "ENVIADA_TESORERIA") throw new Error("La cuenta por pagar debe estar enviada a tesorería para pagar")
-  if (cp.ordenCompra.estado !== "FACTURADA") throw new Error("La orden de compra debe estar facturada para cerrarla")
+  if (cp.ordenCompra && cp.ordenCompra.estado !== "FACTURADA") throw new Error("La orden de compra debe estar facturada para cerrarla")
+  if (!cp.ordenCompra) throw new Error("Esta cuenta por pagar no tiene una orden de compra asociada")
 
-  // Get bank account name
+  // Get bank account
   const cuenta = await prisma.cuentaBancaria.findFirst({
     where: { id: cuentaBancariaId, empresaId },
-    select: { banco: true, numeroCuenta: true },
+    select: { id: true, banco: true, numeroCuenta: true, saldoActual: true },
   })
-  const cuentaLabel = cuenta ? `${cuenta.banco} - ${cuenta.numeroCuenta}` : null
+  if (!cuenta) throw new Error("Cuenta bancaria no encontrada")
+  const cuentaLabel = `${cuenta.banco} - ${cuenta.numeroCuenta}`
 
   // Save comprobante file if provided
   const savedFile = comprobante?.base64 ? await saveFile(comprobante, empresaId) : null
@@ -1654,44 +1535,64 @@ export async function pagarCuenta(cuentaPagarId: string, cuentaBancariaId: strin
   })
   const nextNumero = (lastEgreso?.numero ?? 0) + 1
 
-  // Create payment
-  const pago = await prisma.pago.create({
-    data: {
-      empresaId,
-      cuentaPagarId: cp.id,
-      proveedorId: cp.ordenCompra.proveedorId,
-      cuentaBancariaId,
-      tipo: "FACTURA",
-      metodo: "TRANSFERENCIA",
-      valor: cp.saldoPendiente,
-      fechaPago: new Date(),
-      estado: "PAGADO",
-      comprobante: savedFile?.url ?? null,
-    },
-  })
+  let pagoId = ""
 
-  // Create egreso
-  await prisma.egreso.create({
-    data: {
-      empresaId,
-      pagoId: pago.id,
-      numero: nextNumero,
-      beneficiario: cp.ordenCompra.proveedor.razonSocial,
-      cuentaBancaria: cuentaLabel,
-      valor: cp.saldoPendiente,
-    },
-  })
+  // Execute everything in a transaction
+  await prisma.$transaction(async (tx: any) => {
+    const pago = await tx.pago.create({
+      data: {
+        empresaId,
+        cuentaPagarId: cp.id,
+        proveedorId: cp.ordenCompra!.proveedorId,
+        cuentaBancariaId,
+        tipo: "FACTURA",
+        metodo: "TRANSFERENCIA",
+        valor: cp.saldoPendiente,
+        fechaPago: new Date(),
+        estado: "PAGADO",
+        comprobante: savedFile?.url ?? null,
+      },
+    })
+    pagoId = pago.id
 
-  // Update cuentaPagar
-  await prisma.cuentaPagar.update({
-    where: { id: cuentaPagarId },
-    data: { estado: "PAGADA", saldoPendiente: 0 },
-  })
+    await tx.egreso.create({
+      data: {
+        empresaId,
+        pagoId: pago.id,
+        numero: nextNumero,
+        beneficiario: cp.ordenCompra!.proveedor.razonSocial,
+        cuentaBancaria: cuentaLabel,
+        valor: cp.saldoPendiente,
+      },
+    })
 
-  // Update ordenCompra
-  await prisma.ordenCompra.update({
-    where: { id: cp.ordenCompraId },
-    data: { estado: "CERRADA" },
+    await tx.movimientoBancario.create({
+      data: {
+        cuentaId: cuentaBancariaId,
+        tipo: "EGASTO",
+        fecha: new Date(),
+        monto: cp.saldoPendiente,
+        descripcion: `Pago OC #${cp.ordenCompra!.numero} - ${cp.ordenCompra!.proveedor.razonSocial}`,
+        referencia: `Egreso #${nextNumero}`,
+        estado: "CONCILIADO",
+        fechaConciliacion: new Date(),
+      },
+    })
+
+    await tx.cuentaBancaria.update({
+      where: { id: cuentaBancariaId },
+      data: { saldoActual: { decrement: cp.saldoPendiente } },
+    })
+
+    await tx.cuentaPagar.update({
+      where: { id: cuentaPagarId },
+      data: { estado: "PAGADA", saldoPendiente: 0, ...(numeroFactura ? { numeroFactura } : {}) },
+    })
+
+    await tx.ordenCompra.update({
+      where: { id: cp.ordenCompraId! },
+      data: { estado: "CERRADA" },
+    })
   })
 
   await registrarHistorial({
@@ -1702,13 +1603,13 @@ export async function pagarCuenta(cuentaPagarId: string, cuentaBancariaId: strin
     estadoNuevo: "PAGADA",
     descripcion: `Pagada - Egreso #${nextNumero}`,
     usuarioId: userId,
-    referenciaId: pago.id,
+    referenciaId: pagoId,
   })
 
   await registrarHistorial({
     empresaId,
     entidadTipo: "PAGO",
-    entidadId: pago.id,
+    entidadId: pagoId,
     estadoNuevo: "PAGADO",
     descripcion: `Pago #${nextNumero} realizado por $${Number(cp.saldoPendiente).toLocaleString("es-CO")}`,
     usuarioId: userId,
@@ -1718,15 +1619,15 @@ export async function pagarCuenta(cuentaPagarId: string, cuentaBancariaId: strin
   await registrarHistorial({
     empresaId,
     entidadTipo: "ORDEN_COMPRA",
-    entidadId: cp.ordenCompraId,
+    entidadId: cp.ordenCompraId!,
     estadoAnterior: "FACTURADA",
     estadoNuevo: "CERRADA",
-    descripcion: "OC cerrada por pago completado",
+    descripcion: `Pagada - Egreso #${nextNumero}`,
     usuarioId: userId,
-    referenciaId: pago.id,
+    referenciaId: pagoId,
   })
 
-  await generarAsiento("PAGO_PROVEEDOR", pago.id).catch((err) => {
+  await generarAsiento("PAGO_PROVEEDOR", pagoId).catch((err) => {
     console.error("Error al generar asiento contable:", err)
   })
 
@@ -1734,12 +1635,20 @@ export async function pagarCuenta(cuentaPagarId: string, cuentaBancariaId: strin
     empresaId,
     tipo: "PAGO_REALIZADO",
     titulo: "Pago realizado",
-    mensaje: `Pago a ${cp.ordenCompra.proveedor.razonSocial} por ${Number(cp.saldoPendiente).toLocaleString("es-CO")} - Egreso #${nextNumero}`,
-    referenciaId: pago.id,
+    mensaje: `Pago a ${cp.ordenCompra!.proveedor.razonSocial} por ${Number(cp.saldoPendiente).toLocaleString("es-CO")} - Egreso #${nextNumero}`,
+    referenciaId: pagoId,
     referenciaTipo: "PAGO",
     recurso: "pago",
     accion: "READ",
   })
+
+  AutomationService.ejecutarEvento({
+    empresaId,
+    codigoEvento: "PAGO_REALIZADO",
+    entidadTipo: "PAGO",
+    entidadId: pagoId,
+    usuarioId: userId,
+  }).catch(() => {})
 
   revalidatePath("/tesoreria")
   revalidatePath("/compras")
@@ -1754,6 +1663,7 @@ export async function deleteCuentaPagar(id: string) {
     include: { _count: { select: { pagos: true } } },
   })
   if (!cp) throw new Error("Cuenta por pagar no encontrada")
+  if (cp.estado === "PAGADA") throw new Error("No se puede eliminar una cuenta por pagar ya pagada")
 
   await prisma.$transaction(async (tx: any) => {
     const pagos = await tx.pago.findMany({ where: { cuentaPagarId: id }, select: { id: true } })
@@ -1765,4 +1675,370 @@ export async function deleteCuentaPagar(id: string) {
   })
 
   revalidatePath("/tesoreria")
+}
+
+export async function actualizarFacturaCuentaPagar(id: string, numeroFactura: string) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "cuenta_pagar", accion: "UPDATE" })
+  const cp = await prisma.cuentaPagar.findFirst({ where: { id, empresaId }, select: { id: true, numeroFactura: true, estado: true } })
+  if (!cp) throw new Error("Cuenta por pagar no encontrada")
+  if (cp.numeroFactura) throw new Error("La cuenta por pagar ya tiene un número de factura y no se puede modificar")
+
+  await prisma.cuentaPagar.update({
+    where: { id },
+    data: { numeroFactura },
+  })
+
+  revalidatePath("/tesoreria")
+  return { success: true }
+}
+
+export async function createMultipleCotizaciones(data: {
+  requisicionId: string
+  cotizaciones: {
+    proveedorId: string
+    tiempoEntrega: string | null
+    formaPago: string | null
+    observaciones: string | null
+    items: { descripcion: string; unidadMedida: string; cantidad: number; valorUnitario: number; valorTotal: number }[]
+    archivos: { nombre: string; base64?: string; url?: string }[]
+  }[]
+}) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "cotizacion", accion: "CREATE" })
+
+  const reqCheck = await prisma.requisicion.findFirst({
+    where: { id: data.requisicionId, empresaId },
+    select: { estado: true, numero: true },
+  })
+  if (!reqCheck) throw new Error("Requisición no encontrada")
+  if (reqCheck.estado !== "EN_COTIZACION") throw new Error("La requisición debe estar en cotización")
+
+  const proveedorIds = [...new Set(data.cotizaciones.map(c => c.proveedorId))]
+  const proveedoresValidos = await prisma.proveedor.findMany({ where: { id: { in: proveedorIds }, empresaId }, select: { id: true } })
+  const validIds = new Set(proveedoresValidos.map(p => p.id))
+  for (const c of data.cotizaciones) {
+    if (!validIds.has(c.proveedorId)) throw new Error(`Proveedor ${c.proveedorId} no encontrado o no pertenece a esta empresa`)
+  }
+
+  const results = await prisma.$transaction(async (tx: any) => {
+    const created: any[] = []
+    for (const cot of data.cotizaciones) {
+      const last = await tx.cotizacion.findFirst({ where: { empresaId }, orderBy: { numero: "desc" }, select: { numero: true } })
+      const numero = (last?.numero ?? 0) + 1
+
+      const valorTotal = cot.items.reduce((s, i) => s + Number(i.valorTotal), 0)
+
+      const archivos: { nombre: string; url: string; tamaño: number }[] = []
+      for (const f of cot.archivos) {
+        if (f.base64) {
+          const saved = await saveFile(f as { nombre: string; base64: string }, empresaId)
+          if (saved) archivos.push(saved)
+        } else if (f.url) {
+          archivos.push({ nombre: f.nombre, url: f.url, tamaño: 0 })
+        }
+      }
+
+      const record = await tx.cotizacion.create({
+        data: {
+          empresaId,
+          requisicionId: data.requisicionId,
+          proveedorId: cot.proveedorId,
+          numero,
+          valorTotal,
+          tiempoEntrega: cot.tiempoEntrega,
+          formaPago: cot.formaPago,
+          observaciones: cot.observaciones,
+          archivos: archivos.length > 0 ? archivos : undefined,
+          items: {
+              create: cot.items.map((i, idx) => ({
+                item: idx + 1,
+                descripcion: i.descripcion,
+                unidadMedida: i.unidadMedida,
+                cantidad: i.cantidad,
+                valorUnitario: Number(i.valorUnitario),
+                valorTotal: Number(i.valorTotal),
+              })),
+          },
+        },
+        include: { proveedor: true, items: true },
+      })
+      created.push(record)
+    }
+    return created
+  })
+
+  await prisma.requisicion.update({
+    where: { id: data.requisicionId },
+    data: { estado: "EN_COTIZACION" },
+  })
+
+  await registrarHistorial({
+    empresaId,
+    entidadTipo: "REQUISICION",
+    entidadId: data.requisicionId,
+    estadoAnterior: reqCheck.estado,
+    estadoNuevo: "EN_COTIZACION",
+    descripcion: `${results.length} cotización(es) registrada(s)`,
+    usuarioId: userId,
+    referenciaId: results[0]?.id,
+  })
+
+  for (const cot of results) {
+    await registrarHistorial({
+      empresaId,
+      entidadTipo: "COTIZACION",
+      entidadId: cot.id,
+      estadoNuevo: "REGISTRADA",
+      descripcion: `Cotización #${cot.numero} creada`,
+      usuarioId: userId,
+    })
+  }
+
+  revalidatePath("/compras")
+  return results.map((r: any) => serializar({
+    ...r,
+    fecha: r.fecha instanceof Date ? r.fecha.toISOString() : r.fecha,
+    valorTotal: Number(r.valorTotal),
+    items: r.items?.map((i: any) => ({
+      ...i,
+      cantidad: Number(i.cantidad),
+      valorUnitario: Number(i.valorUnitario),
+      valorTotal: Number(i.valorTotal),
+    })),
+  })) as any
+}
+
+export async function generarLinkPublicoCotizacion(id: string) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "cotizacion", accion: "UPDATE" })
+
+  const cot = await prisma.cotizacion.findFirst({ where: { id, empresaId } })
+  if (!cot) throw new Error("Cotización no encontrada")
+  if (cot.tokenPublico) throw new Error("Ya tiene un link público generado")
+
+  const tokenPublico = crypto.randomUUID()
+
+  await prisma.cotizacion.update({
+    where: { id },
+    data: { tokenPublico },
+  })
+
+  await registrarHistorial({
+    empresaId,
+    entidadTipo: "COTIZACION",
+    entidadId: id,
+    estadoNuevo: "LINK_GENERADO",
+    descripcion: "Link público generado",
+    usuarioId: userId,
+  })
+
+  revalidatePath("/compras")
+  return { token: tokenPublico }
+}
+
+export async function generarLinkComparativo(params: { requisicionId: string; cotizacionesIds: string[] }) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "cotizacion", accion: "UPDATE" })
+
+  if (!params.requisicionId || !params.cotizacionesIds || params.cotizacionesIds.length < 2) {
+    throw new Error("Se requieren al menos 2 cotizaciones para generar un comparativo")
+  }
+
+  const token = uuid()
+  const link = await prisma.linkComparativo.create({
+    data: {
+      empresaId,
+      requisicionId: params.requisicionId,
+      token,
+      cotizacionesId: params.cotizacionesIds,
+    },
+  })
+
+  return { token: link.token }
+}
+
+export async function limpiarLinkPublicoCotizacion(id: string) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "cotizacion", accion: "UPDATE" })
+
+  const cot = await prisma.cotizacion.findFirst({ where: { id, empresaId } })
+  if (!cot) throw new Error("Cotización no encontrada")
+
+  await prisma.cotizacion.update({
+    where: { id },
+    data: { tokenPublico: null },
+  })
+
+  revalidatePath("/compras")
+}
+
+// ─── Duplicar OC ───────────────────────────────────────────
+
+export async function duplicarOrdenCompra(id: string) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "orden_compra", accion: "DUPLICAR" })
+
+  const original = await prisma.ordenCompra.findFirst({
+    where: { id, empresaId },
+    include: { items: { orderBy: { item: "asc" } } },
+  })
+  if (!original) throw new Error("Orden de Compra no encontrada")
+
+  const numero = await getNextOCNumero(empresaId)
+  const hoy = new Date()
+
+  const oc = await prisma.ordenCompra.create({
+    data: {
+      empresaId,
+      requisicionId: original.requisicionId,
+      cotizacionId: original.cotizacionId,
+      proveedorId: original.proveedorId,
+      numero,
+      fecha: hoy,
+      subtotal: original.subtotal,
+      descuento: original.descuento,
+      iva: original.iva,
+      valorTotal: original.valorTotal,
+      condicionesComerciales: original.condicionesComerciales,
+      fechaEntrega: original.fechaEntrega,
+      sitioEntrega: original.sitioEntrega,
+      centroCostosId: original.centroCostosId,
+      formaPago: original.formaPago,
+      correoFacturacion: original.correoFacturacion,
+      elaboradoPor: userId,
+      estado: "EMITIDA",
+      observaciones: original.observaciones ? `${original.observaciones} (Duplicada de OC #${original.numero})` : `Duplicada de OC #${original.numero}`,
+      items: {
+        create: original.items.map((i) => ({
+          item: i.item,
+          descripcion: i.descripcion,
+          unidadMedida: i.unidadMedida,
+          cantidad: i.cantidad,
+          valorUnitario: i.valorUnitario,
+          valorTotal: i.valorTotal,
+          tipoIva: i.tipoIva ?? "EXENTO",
+        })),
+      },
+    },
+    include: {
+      proveedor: true,
+      items: { orderBy: { item: "asc" } },
+    },
+  })
+
+  await registrarHistorial({
+    empresaId,
+    entidadTipo: "ORDEN_COMPRA",
+    entidadId: oc.id,
+    estadoNuevo: "EMITIDA",
+    descripcion: `OC duplicada de OC #${original.numero}`,
+    usuarioId: userId,
+    referenciaId: original.id,
+  })
+
+  revalidatePath("/compras")
+  return {
+    ...oc,
+    subtotal: Number(oc.subtotal),
+    descuento: Number(oc.descuento),
+    iva: Number(oc.iva),
+    valorTotal: Number(oc.valorTotal),
+    proveedor: oc.proveedor,
+    items: oc.items.map((i) => ({
+      ...i,
+      cantidad: Number(i.cantidad),
+      valorUnitario: Number(i.valorUnitario),
+      valorTotal: Number(i.valorTotal),
+    })),
+  }
+}
+
+// ─── Revertir OC Facturada ────────────────────────────────
+
+export async function revertirOCFacturada(id: string) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "orden_compra", accion: "UPDATE" })
+
+  const oc = await prisma.ordenCompra.findFirst({
+    where: { id, empresaId },
+    include: { cuentasPagar: { include: { pagos: true } } },
+  })
+  if (!oc) throw new Error("Orden de Compra no encontrada")
+  if (oc.estado !== "FACTURADA") throw new Error("Solo se puede revertir una OC en estado FACTURADA")
+
+  for (const cp of oc.cuentasPagar) {
+    if (cp.pagos.length > 0) throw new Error(`La CuentaPagar ${cp.numeroFactura} ya tiene pagos registrados, no se puede revertir`)
+  }
+
+  await prisma.$transaction(async (tx: any) => {
+    // Eliminar registros de historial de las CuentasPagar
+    for (const cp of oc.cuentasPagar) {
+      await tx.historialEstado.deleteMany({ where: { entidadTipo: "CUENTA_PAGAR", entidadId: cp.id } })
+      await tx.cuentaPagar.delete({ where: { id: cp.id } })
+    }
+
+    // Revertir OC a EMITIDA
+    await tx.ordenCompra.update({
+      where: { id },
+      data: { estado: "EMITIDA", tokenPublico: null },
+    })
+  })
+
+  await registrarHistorial({
+    empresaId,
+    entidadTipo: "ORDEN_COMPRA",
+    entidadId: id,
+    estadoAnterior: "FACTURADA",
+    estadoNuevo: "EMITIDA",
+    descripcion: "OC revertida a EMITIDA - factura cancelada",
+    usuarioId: userId,
+  })
+
+  revalidatePath("/compras")
+}
+
+// ─── Link Público OC ──────────────────────────────────────
+
+export async function generarLinkPublicoOrdenCompra(id: string) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "orden_compra", accion: "UPDATE" })
+
+  const oc = await prisma.ordenCompra.findFirst({ where: { id, empresaId } })
+  if (!oc) throw new Error("Orden de Compra no encontrada")
+  if (oc.tokenPublico) throw new Error("Ya tiene un link público generado")
+
+  const tokenPublico = crypto.randomUUID()
+
+  await prisma.ordenCompra.update({
+    where: { id },
+    data: { tokenPublico },
+  })
+
+  await registrarHistorial({
+    empresaId,
+    entidadTipo: "ORDEN_COMPRA",
+    entidadId: id,
+    estadoNuevo: "LINK_GENERADO",
+    descripcion: "Link público generado",
+    usuarioId: userId,
+  })
+
+  revalidatePath("/compras")
+  return { token: tokenPublico }
+}
+
+export async function limpiarLinkPublicoOrdenCompra(id: string) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "orden_compra", accion: "UPDATE" })
+
+  const oc = await prisma.ordenCompra.findFirst({ where: { id, empresaId } })
+  if (!oc) throw new Error("Orden de Compra no encontrada")
+
+  await prisma.ordenCompra.update({
+    where: { id },
+    data: { tokenPublico: null },
+  })
+
+  revalidatePath("/compras")
 }

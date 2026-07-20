@@ -23,9 +23,6 @@ type HistorialEntry = {
 
 const ENUM_ESTILOS: Record<string, { color: string; bg: string; icon: any; label: string }> = {
   BORRADOR:              { color: "text-gray-500", bg: "bg-gray-100", icon: Clock, label: "Borrador" },
-  PENDIENTE_APROBACION:  { color: "text-amber-600", bg: "bg-amber-100", icon: Send, label: "Pendiente" },
-  APROBADA:              { color: "text-green-600", bg: "bg-green-100", icon: CheckCircle, label: "Aprobada" },
-  RECHAZADA:             { color: "text-red-600", bg: "bg-red-100", icon: XCircle, label: "Rechazada" },
   EN_COTIZACION:         { color: "text-blue-600", bg: "bg-blue-100", icon: DollarSign, label: "En Cotización" },
   ORDEN_COMPRA_GENERADA: { color: "text-purple-600", bg: "bg-purple-100", icon: FileText, label: "OC Generada" },
   CERRADA:               { color: "text-gray-600", bg: "bg-gray-100", icon: Ban, label: "Cerrada" },

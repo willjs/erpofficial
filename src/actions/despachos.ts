@@ -6,6 +6,7 @@ import { verificarPermiso } from "@/lib/permisos"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { notificarPorPermiso } from "./notificaciones"
+import { AutomationService } from "@/lib/automation-service"
 
 async function registrarHistorial(params: {
   empresaId: string
@@ -115,6 +116,14 @@ export async function createDespacho(data: DespachoFormData) {
     usuarioId: userId,
   })
 
+  AutomationService.ejecutarEvento({
+    empresaId,
+    codigoEvento: "DESPACHO_CREADO",
+    entidadTipo: "DESPACHO",
+    entidadId: despacho.id,
+    usuarioId: userId,
+  }).catch(() => {})
+
   notificarPorPermiso({
     empresaId,
     tipo: "info",
@@ -174,12 +183,21 @@ export async function updateDespacho(id: string, data: DespachoFormData) {
   return despacho
 }
 
+const TRANSICIONES_DESPACHO: Record<string, string[]> = {
+  BORRADOR: ["ENVIADO", "CANCELADO"],
+  ENVIADO: ["ENTREGADO", "CANCELADO"],
+}
+
 export async function cambiarEstadoDespacho(id: string, estado: string) {
   const { empresaId, userId } = await verifySession()
   await verificarPermiso(userId, { recurso: "despacho", accion: "UPDATE" })
   const despacho = await prisma.despacho.findFirst({ where: { id, empresaId } })
   if (!despacho) throw new Error("Despacho no encontrado")
   const estadoAnterior = despacho.estado
+  const permitidos = TRANSICIONES_DESPACHO[estadoAnterior]
+  if (!permitidos || !permitidos.includes(estado)) {
+    throw new Error(`No se puede cambiar de ${estadoAnterior} a ${estado}`)
+  }
   await prisma.despacho.update({ where: { id }, data: { estado: estado as any } })
 
   await registrarHistorial({
@@ -191,6 +209,16 @@ export async function cambiarEstadoDespacho(id: string, estado: string) {
     descripcion: `Estado cambiado de ${estadoAnterior} a ${estado}`,
     usuarioId: userId,
   })
+
+  if (estado === "ENVIADO") {
+    AutomationService.ejecutarEvento({
+      empresaId,
+      codigoEvento: "DESPACHO_ENVIADO",
+      entidadTipo: "DESPACHO",
+      entidadId: id,
+      usuarioId: userId,
+    }).catch(() => {})
+  }
 
   notificarPorPermiso({
     empresaId,

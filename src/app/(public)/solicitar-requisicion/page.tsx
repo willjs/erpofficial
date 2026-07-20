@@ -5,6 +5,7 @@ import { useActionState } from "react"
 import { crearRequisicionPublica } from "@/actions/public-compras"
 import { getCentrosCostosPublicos } from "@/actions/public-centro-costos"
 import type { PublicRequisicionState } from "@/actions/public-compras"
+import { uuid } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -34,7 +35,7 @@ interface ArchivoAdjunto {
 
 function emptyItem(): ItemRow {
   return {
-    key: crypto.randomUUID(),
+    key: uuid(),
     descripcion: "",
     unidadMedida: "",
     cantidadSolicitada: "",
@@ -182,7 +183,7 @@ export default function SolicitarRequisicionPage() {
           const cant = cantIdx >= 0 ? String(row[cantIdx] ?? "").trim() : ""
           if (!desc && !cant) continue
           parsed.push({
-            key: crypto.randomUUID(),
+            key: uuid(),
             descripcion: desc,
             unidadMedida: und,
             cantidadSolicitada: cant,
@@ -207,7 +208,7 @@ export default function SolicitarRequisicionPage() {
       if (file.name.match(/\.xlsx?$/i)) {
         handleExcel(file)
       }
-      nuevos.push({ key: crypto.randomUUID(), file })
+      nuevos.push({ key: uuid(), file })
     }
     setArchivos((prev) => [...prev, ...nuevos])
   }

@@ -11,6 +11,7 @@ export interface Column<T> {
   header: string
   render?: (item: T) => React.ReactNode
   className?: string
+  hideOnMobile?: boolean
 }
 
 interface DataTableProps<T> {
@@ -21,6 +22,7 @@ interface DataTableProps<T> {
   searchPlaceholder?: string
   onSearch?: (term: string) => void
   searchTerm?: string
+  mobileCardTitle?: (item: T) => React.ReactNode
 }
 
 export function DataTable<T extends Record<string, any>>({
@@ -31,11 +33,14 @@ export function DataTable<T extends Record<string, any>>({
   searchPlaceholder = "Buscar...",
   onSearch,
   searchTerm,
+  mobileCardTitle,
 }: DataTableProps<T>) {
   const [page, setPage] = useState(1)
   const pageSize = 10
   const totalPages = Math.ceil(data.length / pageSize)
   const paginated = data.slice((page - 1) * pageSize, page * pageSize)
+
+  const desktopColumns = columns.filter((c) => !c.hideOnMobile)
 
   return (
     <div className="space-y-4">
@@ -50,11 +55,43 @@ export function DataTable<T extends Record<string, any>>({
           />
         </div>
       )}
-      <div className="rounded-md">
+
+      {/* Vista móvil: tarjetas */}
+      <div className="space-y-3 md:hidden">
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : paginated.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">No se encontraron registros</p>
+        ) : (
+          paginated.map((item, i) => (
+            <div key={item.id || i} className="rounded-lg border bg-card p-4 space-y-2 shadow-sm">
+              {mobileCardTitle && (
+                <div className="font-semibold text-sm border-b pb-2 mb-2">{mobileCardTitle(item)}</div>
+              )}
+              {columns.map((col) => {
+                if (col.hideOnMobile) return null
+                const value = col.render ? col.render(item) : item[col.key] ?? "—"
+                if (!value) return null
+                return (
+                  <div key={col.key} className="flex justify-between items-start gap-2 text-sm">
+                    <span className="text-muted-foreground shrink-0">{col.header}:</span>
+                    <span className="text-right">{value}</span>
+                  </div>
+                )
+              })}
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Vista desktop: tabla */}
+      <div className="rounded-md hidden md:block">
         <Table>
           <TableHeader>
             <TableRow>
-              {columns.map((col) => (
+              {desktopColumns.map((col) => (
                 <TableHead key={col.key} className={col.className}>
                   {col.header}
                 </TableHead>
@@ -64,20 +101,20 @@ export function DataTable<T extends Record<string, any>>({
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
+                <TableCell colSpan={desktopColumns.length} className="h-24 text-center">
                   <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
                 </TableCell>
               </TableRow>
             ) : paginated.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground">
+                <TableCell colSpan={desktopColumns.length} className="h-24 text-center text-muted-foreground">
                   No se encontraron registros
                 </TableCell>
               </TableRow>
             ) : (
               paginated.map((item, i) => (
                 <TableRow key={item.id || i}>
-                  {columns.map((col) => (
+                  {desktopColumns.map((col) => (
                     <TableCell key={col.key} className={col.className}>
                       {col.render ? col.render(item) : item[col.key] ?? "—"}
                     </TableCell>

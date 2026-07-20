@@ -6,6 +6,7 @@ import { verificarPermiso } from "@/lib/permisos"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { notificarPorPermiso } from "./notificaciones"
+import { AutomationService } from "@/lib/automation-service"
 
 async function registrarHistorial(params: {
   empresaId: string
@@ -87,12 +88,16 @@ export async function createPedido(data: PedidoFormData) {
   const numero = (last?.numero ?? 0) + 1
 
   const totals = validated.items.reduce(
-    (acc, item) => ({
-      subtotal: acc.subtotal + item.subtotal,
-      impuesto: acc.impuesto + item.impuesto,
-      descuento: acc.descuento + item.descuento,
-      total: acc.total + item.total,
-    }),
+    (acc, item) => {
+      const sub = item.cantidad * item.precioUnitario - item.descuento
+      const imp = item.impuesto
+      return {
+        subtotal: acc.subtotal + sub,
+        impuesto: acc.impuesto + imp,
+        descuento: acc.descuento + item.descuento,
+        total: acc.total + sub + imp,
+      }
+    },
     { subtotal: 0, impuesto: 0, descuento: 0, total: 0 }
   )
 
@@ -122,6 +127,14 @@ export async function createPedido(data: PedidoFormData) {
     usuarioId: userId,
   })
 
+  AutomationService.ejecutarEvento({
+    empresaId,
+    codigoEvento: "PEDIDO_CREADO",
+    entidadTipo: "PEDIDO",
+    entidadId: pedido.id,
+    usuarioId: userId,
+  }).catch(() => {})
+
   notificarPorPermiso({
     empresaId,
     tipo: "info",
@@ -148,31 +161,36 @@ export async function updatePedido(id: string, data: PedidoFormData) {
   if (existing.estado !== "BORRADOR") throw new Error("Solo puedes editar pedidos en borrador")
 
   const totals = validated.items.reduce(
-    (acc, item) => ({
-      subtotal: acc.subtotal + item.subtotal,
-      impuesto: acc.impuesto + item.impuesto,
-      descuento: acc.descuento + item.descuento,
-      total: acc.total + item.total,
-    }),
+    (acc, item) => {
+      const sub = item.cantidad * item.precioUnitario - item.descuento
+      const imp = item.impuesto
+      return {
+        subtotal: acc.subtotal + sub,
+        impuesto: acc.impuesto + imp,
+        descuento: acc.descuento + item.descuento,
+        total: acc.total + sub + imp,
+      }
+    },
     { subtotal: 0, impuesto: 0, descuento: 0, total: 0 }
   )
 
-  await prisma.pedidoItem.deleteMany({ where: { pedidoId: id } })
-
-  const pedido = await prisma.pedido.update({
-    where: { id },
-    data: {
-      clienteId: validated.clienteId,
-      fecha: new Date(validated.fecha),
-      ...totals,
-      notas: validated.notas || null,
-      items: {
-        create: validated.items.map((item, i) => ({
-          item: i + 1,
-          ...item,
-        })),
+  const pedido = await prisma.$transaction(async (tx: any) => {
+    await tx.pedidoItem.deleteMany({ where: { pedidoId: id } })
+    return tx.pedido.update({
+      where: { id },
+      data: {
+        clienteId: validated.clienteId,
+        fecha: new Date(validated.fecha),
+        ...totals,
+        notas: validated.notas || null,
+        items: {
+          create: validated.items.map((item, i) => ({
+            item: i + 1,
+            ...item,
+          })),
+        },
       },
-    },
+    })
   })
 
   await registrarHistorial({
@@ -189,11 +207,23 @@ export async function updatePedido(id: string, data: PedidoFormData) {
   return pedido
 }
 
+const TRANSICIONES_PEDIDO: Record<string, string[]> = {
+  BORRADOR: ["CONFIRMADO", "CANCELADO"],
+  CONFIRMADO: ["EN_DESPACHO", "CANCELADO"],
+  EN_DESPACHO: ["COMPLETADO", "CANCELADO"],
+}
+
 export async function cambiarEstadoPedido(id: string, estado: string) {
   const { empresaId, userId } = await verifySession()
   await verificarPermiso(userId, { recurso: "pedido", accion: "UPDATE" })
   const pedido = await prisma.pedido.findFirst({ where: { id, empresaId } })
   if (!pedido) throw new Error("Pedido no encontrado")
+
+  const estadoAnterior = pedido.estado
+  const permitidos = TRANSICIONES_PEDIDO[estadoAnterior]
+  if (!permitidos || !permitidos.includes(estado)) {
+    throw new Error(`No se puede cambiar de ${estadoAnterior} a ${estado}`)
+  }
 
   if (estado === "EN_DESPACHO") {
     const items = await prisma.pedidoItem.findMany({ where: { pedidoId: id } })
@@ -203,7 +233,6 @@ export async function cambiarEstadoPedido(id: string, estado: string) {
     }
   }
 
-  const estadoAnterior = pedido.estado
   await prisma.pedido.update({ where: { id }, data: { estado: estado as any } })
 
   await registrarHistorial({
@@ -215,6 +244,16 @@ export async function cambiarEstadoPedido(id: string, estado: string) {
     descripcion: `Estado cambiado de ${estadoAnterior} a ${estado}`,
     usuarioId: userId,
   })
+
+  if (estado === "CONFIRMADO") {
+    AutomationService.ejecutarEvento({
+      empresaId,
+      codigoEvento: "PEDIDO_CONFIRMADO",
+      entidadTipo: "PEDIDO",
+      entidadId: id,
+      usuarioId: userId,
+    }).catch(() => {})
+  }
 
   notificarPorPermiso({
     empresaId,

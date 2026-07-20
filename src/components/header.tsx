@@ -4,9 +4,11 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { logout } from "@/actions/auth"
 import { getNotificaciones, getNotificacionesNoLeidas, marcarLeida } from "@/actions/notificaciones"
 import { useToast } from "@/components/ui/use-toast"
+import { useSidebar } from "@/components/sidebar-provider"
 import { Input } from "@/components/ui/input"
 import { EmpresaSwitcher } from "@/components/empresa-switcher"
-import { LogOut, Bell, Search, User, CheckCheck, Loader2, Shield } from "lucide-react"
+import { LogOut, Bell, Search, User, CheckCheck, Loader2, Shield, Menu } from "lucide-react"
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import Link from "next/link"
 
 interface Notificacion {
@@ -30,10 +32,14 @@ export function Header({
   superAdmin,
   empresas,
   empresaActualId,
+  userName,
+  avatarUrl,
 }: {
   superAdmin?: boolean
   empresas?: EmpresaItem[]
   empresaActualId?: string
+  userName?: string
+  avatarUrl?: string
 }) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
@@ -42,6 +48,7 @@ export function Header({
   const [loading, setLoading] = useState(true)
   const [marcando, setMarcando] = useState<string | null>(null)
   const { toast } = useToast()
+  const { toggle } = useSidebar()
   const dropdownRef = useRef<HTMLDivElement>(null)
   const notifRef = useRef<HTMLDivElement>(null)
 
@@ -98,7 +105,14 @@ export function Header({
   }
 
   return (
-    <header className="flex h-[72px] items-center justify-between bg-card px-6">
+    <header className="flex h-[72px] items-center justify-between bg-card px-4 md:px-6">
+      <button
+        onClick={toggle}
+        className="lg:hidden mr-2 flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
+        aria-label="Abrir menú"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
       <div className="relative hidden sm:block">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -205,19 +219,23 @@ export function Header({
         <div className="relative" ref={dropdownRef}>
           <button
             onClick={() => { setDropdownOpen(!dropdownOpen); setNotifOpen(false) }}
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-colors"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-colors overflow-hidden"
           >
-            U
+            <Avatar className="h-9 w-9">
+              <AvatarImage src={avatarUrl || undefined} />
+              <AvatarFallback className="bg-primary text-primary-foreground text-sm font-bold">U</AvatarFallback>
+            </Avatar>
           </button>
 
           {dropdownOpen && (
             <div className="absolute right-0 top-full mt-2 w-56 rounded-lg border border-border bg-card p-1 shadow-lg z-50">
               <div className="flex items-center gap-3 border-b border-border px-3 py-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold">
-                  U
-                </div>
+                <Avatar className="h-10 w-10">
+                  <AvatarImage src={avatarUrl || undefined} />
+                  <AvatarFallback className="bg-primary text-primary-foreground text-sm font-bold">U</AvatarFallback>
+                </Avatar>
                 <div className="text-sm">
-                  <p className="font-medium text-foreground">Usuario</p>
+                  <p className="font-medium text-foreground">{userName || "Usuario"}</p>
                   <p className="text-xs text-muted-foreground">
                     {superAdmin ? "Super Admin" : "Admin"}
                   </p>
@@ -237,7 +255,7 @@ export function Header({
               )}
               <div className="py-1">
                 <Link
-                  href="/configuracion"
+                  href="/perfil"
                   className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                   onClick={() => setDropdownOpen(false)}
                 >

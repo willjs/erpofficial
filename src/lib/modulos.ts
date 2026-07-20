@@ -17,6 +17,9 @@ export const MODULOS_DISPONIBLES = [
   { clave: "PERMISOS", label: "Permisos (vacaciones)" },
   { clave: "REPORTES", label: "Reportes" },
   { clave: "COMPRAS", label: "Compras (procurement)" },
+  { clave: "PROVEEDORES", label: "Proveedores" },
+  { clave: "OPERACIONES", label: "Operaciones Marítimas" },
+  { clave: "CUENTAS_COBRAR", label: "Cuentas por Cobrar" },
 ]
 
 export const MODULOS_BASICA = ["CORE", "CONTABILIDAD", "CLIENTES", "PEDIDOS", "VENTAS", "DESPACHOS", "TRASPASOS", "RRHH", "NOMINA", "REPORTES", "PERMISOS", "TESORERIA", "PRESUPUESTOS", "DOCUMENTOS", "TAREAS"]

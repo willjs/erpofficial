@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { notificarPorPermiso } from "./notificaciones"
 import { generarAsiento } from "./motor-contable"
+import { AutomationService } from "@/lib/automation-service"
 
 async function registrarHistorial(params: {
   empresaId: string
@@ -102,12 +103,16 @@ export async function createVenta(data: VentaFormData) {
   const numero = (last?.numero ?? 0) + 1
 
   const totals = validated.items.reduce(
-    (acc, item) => ({
-      subtotal: acc.subtotal + item.subtotal,
-      impuesto: acc.impuesto + item.impuesto,
-      descuento: acc.descuento + item.descuento,
-      total: acc.total + item.total,
-    }),
+    (acc, item) => {
+      const sub = item.cantidad * item.precioUnitario - item.descuento
+      const imp = item.impuesto
+      return {
+        subtotal: acc.subtotal + sub,
+        impuesto: acc.impuesto + imp,
+        descuento: acc.descuento + item.descuento,
+        total: acc.total + sub + imp,
+      }
+    },
     { subtotal: 0, impuesto: 0, descuento: 0, total: 0 }
   )
 
@@ -149,6 +154,14 @@ export async function createVenta(data: VentaFormData) {
     usuarioId: userId,
   })
 
+  AutomationService.ejecutarEvento({
+    empresaId,
+    codigoEvento: "VENTA_CREADA",
+    entidadTipo: "VENTA",
+    entidadId: venta.id,
+    usuarioId: userId,
+  }).catch(() => {})
+
   notificarPorPermiso({
     empresaId,
     tipo: "info",
@@ -175,44 +188,49 @@ export async function updateVenta(id: string, data: VentaFormData) {
   if (existing.estado !== "BORRADOR") throw new Error("Solo puedes editar ventas en borrador")
 
   const totals = validated.items.reduce(
-    (acc, item) => ({
-      subtotal: acc.subtotal + item.subtotal,
-      impuesto: acc.impuesto + item.impuesto,
-      descuento: acc.descuento + item.descuento,
-      total: acc.total + item.total,
-    }),
+    (acc, item) => {
+      const sub = item.cantidad * item.precioUnitario - item.descuento
+      const imp = item.impuesto
+      return {
+        subtotal: acc.subtotal + sub,
+        impuesto: acc.impuesto + imp,
+        descuento: acc.descuento + item.descuento,
+        total: acc.total + sub + imp,
+      }
+    },
     { subtotal: 0, impuesto: 0, descuento: 0, total: 0 }
   )
 
-  await prisma.ventaItem.deleteMany({ where: { ventaId: id } })
-  await prisma.ventaPago.deleteMany({ where: { ventaId: id } })
-
-  const venta = await prisma.venta.update({
-    where: { id },
-    data: {
-      clienteId: validated.clienteId,
-      pedidoId: validated.pedidoId || null,
-      fecha: new Date(validated.fecha),
-      tipoFactura: validated.tipoFactura,
-      fechaVencimiento: validated.fechaVencimiento ? new Date(validated.fechaVencimiento) : null,
-      ...totals,
-      notas: validated.notas || null,
-      items: {
-        create: validated.items.map((item, i) => ({
-          item: i + 1,
-          ...item,
-        })),
+  const venta = await prisma.$transaction(async (tx: any) => {
+    await tx.ventaItem.deleteMany({ where: { ventaId: id } })
+    await tx.ventaPago.deleteMany({ where: { ventaId: id } })
+    return tx.venta.update({
+      where: { id },
+      data: {
+        clienteId: validated.clienteId,
+        pedidoId: validated.pedidoId || null,
+        fecha: new Date(validated.fecha),
+        tipoFactura: validated.tipoFactura,
+        fechaVencimiento: validated.fechaVencimiento ? new Date(validated.fechaVencimiento) : null,
+        ...totals,
+        notas: validated.notas || null,
+        items: {
+          create: validated.items.map((item, i) => ({
+            item: i + 1,
+            ...item,
+          })),
+        },
+        pagos: validated.pagos?.length
+          ? {
+              create: validated.pagos.map((p) => ({
+                metodo: p.metodo,
+                monto: p.monto,
+                referencia: p.referencia || null,
+              })),
+            }
+          : undefined,
       },
-      pagos: validated.pagos?.length
-        ? {
-            create: validated.pagos.map((p) => ({
-              metodo: p.metodo,
-              monto: p.monto,
-              referencia: p.referencia || null,
-            })),
-          }
-        : undefined,
-    },
+    })
   })
 
   await registrarHistorial({
@@ -229,12 +247,22 @@ export async function updateVenta(id: string, data: VentaFormData) {
   return venta
 }
 
+const TRANSICIONES_VENTA: Record<string, string[]> = {
+  BORRADOR: ["CONFIRMADA", "ELIMINADO"],
+  CONFIRMADA: ["PAGADA", "ANULADA"],
+  PAGADA: ["ANULADA"],
+}
+
 export async function cambiarEstadoVenta(id: string, estado: string) {
   const { empresaId, userId } = await verifySession()
   await verificarPermiso(userId, { recurso: "venta", accion: "UPDATE" })
   const venta = await prisma.venta.findFirst({ where: { id, empresaId } })
   if (!venta) throw new Error("Venta no encontrada")
   const estadoAnterior = venta.estado
+  const permitidos = TRANSICIONES_VENTA[estadoAnterior]
+  if (!permitidos || !permitidos.includes(estado)) {
+    throw new Error(`No se puede cambiar de ${estadoAnterior} a ${estado}`)
+  }
   await prisma.venta.update({ where: { id }, data: { estado: estado as any } })
 
   await registrarHistorial({
@@ -263,6 +291,14 @@ export async function cambiarEstadoVenta(id: string, estado: string) {
     generarAsiento("FACTURA_CLIENTE", id).catch((err) => {
       console.error("Error al generar asiento contable:", err)
     })
+
+    AutomationService.ejecutarEvento({
+      empresaId,
+      codigoEvento: "VENTA_CONFIRMADA",
+      entidadTipo: "VENTA",
+      entidadId: id,
+      usuarioId: userId,
+    }).catch(() => {})
   }
 
   revalidatePath("/ventas")

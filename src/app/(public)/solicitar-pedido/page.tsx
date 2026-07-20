@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { useActionState } from "react"
 import { crearPedidoPublico, type PublicPedidoState } from "@/actions/public-pedidos"
 import { getProductosPublicos, getServiciosPublicos } from "@/actions/public-productos"
+import { uuid } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -38,7 +39,7 @@ interface ItemRow {
 
 function emptyItem(): ItemRow {
   return {
-    key: crypto.randomUUID(),
+    key: uuid(),
     tipoItem: "PRODUCTO",
     descripcion: "",
     codigo: "",
@@ -203,7 +204,7 @@ export default function SolicitarPedidoPage() {
       setItems((prev) => [
         ...prev.filter((it) => it.descripcion.trim()),
         {
-          key: crypto.randomUUID(),
+          key: uuid(),
           tipoItem: tipoFiltro === "PRODUCTO" ? "PRODUCTO" : "SERVICIO",
           descripcion: item.nombre,
           codigo: item.codigo,
@@ -220,7 +221,7 @@ export default function SolicitarPedidoPage() {
     setItems((prev) => [
       ...prev.filter((it) => it.descripcion.trim()),
       {
-        key: crypto.randomUUID(),
+        key: uuid(),
         tipoItem: tipoFiltro === "PRODUCTO" ? "PRODUCTO" : "SERVICIO",
         descripcion: "",
         codigo: "",

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { useSession } from "next-auth/react"
 import { PageHeader } from "@/components/shared/page-header"
 import { DataTable, type Column } from "@/components/shared/data-table"
 import { FormDialog } from "@/components/shared/form-dialog"
@@ -11,11 +12,13 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import {
   PlusCircle, Pencil, Trash2, ToggleLeft, ToggleRight, Loader2, ShieldCheck,
+  Zap, Copy, Eye, RefreshCw,
 } from "lucide-react"
 import {
-  getEmpresa, updateEmpresa,
+  getEmpresa, updateEmpresa, uploadLogo, removeLogo,
   getDepartamentos, createDepartamento, updateDepartamento, deleteDepartamento,
   getUsuarios, createUsuario, updateUsuario, toggleUsuarioActivo,
   getRoles, createRol, updateRol, deleteRol,
@@ -25,10 +28,15 @@ import {
   assignRolToUser, removeRolFromUser,
 } from "@/actions/configuracion"
 import { useToast } from "@/components/ui/use-toast"
+import {
+  getAutomatizaciones, createAutomatizacion, updateAutomatizacion,
+  toggleAutomatizacionActiva, deleteAutomatizacion, regenerarToken,
+  getAuditoriaAutomatizaciones,
+} from "@/actions/automatizaciones"
 
 // ─── Types ────────────────────────────────────────────────
 
-type TabName = "empresa" | "departamentos" | "usuarios" | "roles" | "centros-costos" | "contabilidad"
+type TabName = "empresa" | "departamentos" | "usuarios" | "roles" | "centros-costos" | "contabilidad" | "automatizaciones"
 
 interface EmpresaData {
   id: string
@@ -116,6 +124,7 @@ export default function ConfiguracionPage() {
         <TabButton active={tab === "roles"} onClick={() => setTab("roles")}>Roles / Permisos</TabButton>
         <TabButton active={tab === "centros-costos"} onClick={() => setTab("centros-costos")}>Centros de Costo</TabButton>
         <TabButton active={tab === "contabilidad"} onClick={() => setTab("contabilidad")}>Config. Contable</TabButton>
+        <TabButton active={tab === "automatizaciones"} onClick={() => setTab("automatizaciones")}>Automatizaciones</TabButton>
       </div>
       <Separator />
       {tab === "empresa" && <EmpresaTab />}
@@ -124,6 +133,7 @@ export default function ConfiguracionPage() {
       {tab === "roles" && <RolesTab />}
       {tab === "centros-costos" && <CentrosCostosTab />}
       {tab === "contabilidad" && <ContabilidadConfigTab />}
+      {tab === "automatizaciones" && <AutomatizacionesTab />}
     </div>
   )
 }
@@ -132,11 +142,14 @@ export default function ConfiguracionPage() {
 
 function EmpresaTab() {
   const { toast } = useToast()
+  const { update: updateSession } = useSession()
   const [empresa, setEmpresa] = useState<EmpresaData | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [form, setForm] = useState({ nombre: "", rfc: "", direccion: "", telefono: "", email: "", tipoContabilidad: "INTERNA" })
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  const [uploadingLogo, setUploadingLogo] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -152,6 +165,7 @@ function EmpresaTab() {
           email: data.email ?? "",
           tipoContabilidad: data.tipoContabilidad ?? "INTERNA",
         })
+        setLogoPreview(data.logo ?? null)
       }
     } catch (err: unknown) {
       toast({ title: "Error al cargar empresa", description: err instanceof Error ? err.message : "Error desconocido", variant: "destructive" })
@@ -177,6 +191,50 @@ function EmpresaTab() {
     }
   }
 
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Archivo inválido", description: "Seleccione una imagen", variant: "destructive" })
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: "Archivo muy grande", description: "Máximo 5MB", variant: "destructive" })
+      return
+    }
+    setUploadingLogo(true)
+    try {
+      const reader = new FileReader()
+      const base64 = await new Promise<string>((resolve) => {
+        reader.onload = () => resolve(reader.result as string)
+        reader.readAsDataURL(file)
+      })
+      const raw = base64.split(",")[1]
+      const updated = await uploadLogo(raw)
+      setEmpresa(updated)
+      setLogoPreview(updated.logo)
+      await updateSession()
+      toast({ title: "Logo actualizado", variant: "success" })
+    } catch (err: unknown) {
+      toast({ title: "Error al subir logo", description: err instanceof Error ? err.message : "Error desconocido", variant: "destructive" })
+    } finally {
+      setUploadingLogo(false)
+      e.target.value = ""
+    }
+  }
+
+  async function handleRemoveLogo() {
+    try {
+      await removeLogo()
+      setLogoPreview(null)
+      if (empresa) setEmpresa({ ...empresa, logo: null })
+      await updateSession()
+      toast({ title: "Logo eliminado", variant: "success" })
+    } catch (err: unknown) {
+      toast({ title: "Error al eliminar logo", description: err instanceof Error ? err.message : "Error desconocido", variant: "destructive" })
+    }
+  }
+
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
 
   return (
@@ -184,14 +242,47 @@ function EmpresaTab() {
       <div className="flex justify-end">
         <Button onClick={() => setEditOpen(true)}><Pencil className="mr-2 h-4 w-4" />Editar Empresa</Button>
       </div>
+
       <Card>
-        <CardContent className="pt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div><Label>Nombre</Label><p className="text-sm mt-1">{empresa?.nombre ?? "—"}</p></div>
-          <div><Label>RFC</Label><p className="text-sm mt-1">{empresa?.rfc ?? "—"}</p></div>
-          <div><Label>Dirección</Label><p className="text-sm mt-1">{empresa?.direccion ?? "—"}</p></div>
-          <div><Label>Teléfono</Label><p className="text-sm mt-1">{empresa?.telefono ?? "—"}</p></div>
-          <div><Label>Email</Label><p className="text-sm mt-1">{empresa?.email ?? "—"}</p></div>
-          <div><Label>Tipo Contabilidad</Label><p className="text-sm mt-1">{empresa?.tipoContabilidad ?? "INTERNA"}</p></div>
+        <CardContent className="pt-6">
+          <div className="flex flex-col items-center gap-4 mb-6">
+            <div className="relative group">
+              {logoPreview ? (
+                <img src={logoPreview} alt="Logo empresa" className="h-28 w-auto object-contain border rounded-lg p-2 bg-background" />
+              ) : (
+                <div className="h-28 w-40 flex items-center justify-center border-2 border-dashed rounded-lg bg-muted text-muted-foreground text-xs text-center px-2">
+                  Sin logo configurado
+                </div>
+              )}
+              {uploadingLogo && (
+                <div className="absolute inset-0 flex items-center justify-center bg-background/80 rounded-lg">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <label className="cursor-pointer">
+                <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
+                <Button variant="outline" size="sm" asChild>
+                  <span><Pencil className="mr-1.5 h-3.5 w-3.5" />{logoPreview ? "Cambiar logo" : "Subir logo"}</span>
+                </Button>
+              </label>
+              {logoPreview && (
+                <Button variant="destructive" size="sm" onClick={handleRemoveLogo}>
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />Eliminar
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div><Label>Nombre</Label><p className="text-sm mt-1">{empresa?.nombre ?? "—"}</p></div>
+            <div><Label>RFC</Label><p className="text-sm mt-1">{empresa?.rfc ?? "—"}</p></div>
+            <div><Label>Dirección</Label><p className="text-sm mt-1">{empresa?.direccion ?? "—"}</p></div>
+            <div><Label>Teléfono</Label><p className="text-sm mt-1">{empresa?.telefono ?? "—"}</p></div>
+            <div><Label>Email</Label><p className="text-sm mt-1">{empresa?.email ?? "—"}</p></div>
+            <div><Label>Tipo Contabilidad</Label><p className="text-sm mt-1">{empresa?.tipoContabilidad ?? "INTERNA"}</p></div>
+          </div>
         </CardContent>
       </Card>
 
@@ -731,14 +822,12 @@ function RolesTab() {
     }
   }
 
-  function togglePermiso(permisoId: string) {
-    setPermisosRol((prev) =>
-      prev.includes(permisoId) ? prev.filter((id) => id !== permisoId) : [...prev, permisoId]
-    )
-  }
-
   async function handleSavePermisos() {
-    if (!editing) return
+    console.log("handleSavePermisos called, editing:", editing?.id, "permisos count:", permisosRol.length)
+    if (!editing) {
+      toast({ title: "Error: no hay rol seleccionado", variant: "destructive" })
+      return
+    }
     setSaving(true)
     try {
       await updateRolPermisos(editing.id, permisosRol)
@@ -746,6 +835,7 @@ function RolesTab() {
       await load()
       toast({ title: "Permisos actualizados", variant: "success" })
     } catch (err: unknown) {
+      console.error("Error al guardar permisos:", err)
       toast({ title: "Error al guardar permisos", description: err instanceof Error ? err.message : "Error desconocido", variant: "destructive" })
     } finally {
       setSaving(false)
@@ -788,39 +878,115 @@ function RolesTab() {
     },
   ]
 
-  const ACCIONES: Record<string, string> = {
-    CREATE: "Crear", READ: "Leer", UPDATE: "Editar", DELETE: "Eliminar", ALL: "Acceso total",
-  }
-  const RECURSOS: Record<string, string> = {
-    empresa: "empresa", departamento: "departamento", usuario: "usuario", rol: "rol",
-    permiso: "permiso", empleado: "empleado", contrato: "contrato", expediente: "expediente",
-    nomina: "nómina", nomina_detalle: "detalle de nómina", incidencia: "incidencia",
-    concepto: "concepto", proyecto: "proyecto", tarea: "tarea", comentario: "comentario",
-    categoria_activo: "categoría", activo: "activo", movimiento_activo: "movimiento",
-    almacen: "almacén", producto: "producto", inventario_stock: "stock",
-    movimiento_inventario: "movimiento de inventario", carpeta: "carpeta", documento: "documento",
-    plan_cuenta: "plan de cuentas", asiento_contable: "asiento contable",
-    asiento_detalle: "detalle de asiento", plantilla_contable: "plantilla contable",
-    presupuesto: "presupuesto", cuenta_bancaria: "cuenta bancaria",
-    movimiento_bancario: "movimiento bancario", cliente: "cliente",
-    contacto_cliente: "contacto", interaccion_cliente: "interacción",
-    tipo_permiso: "tipo de permiso", solicitud_permiso: "solicitud de permiso",
-    reporte: "reporte", dashboard: "dashboard", centro_costos: "centro de costos",
-    proveedor: "proveedor", requisicion: "requisición", cotizacion: "cotización",
-    orden_compra: "orden de compra", recepcion: "recepción", cuenta_pagar: "cuenta por pagar",
-    pago: "pago", egreso: "egreso",
-  }
-  function formatearPermiso(p: PermisoData): string {
-    const recurso = RECURSOS[p.recurso] ?? p.recurso
-    if (p.accion === "ALL") return `Acceso total a ${recurso}`
-    return `${ACCIONES[p.accion] ?? p.accion} ${recurso}`
-  }
-
   const groupedPermisos = permisos.reduce<Record<string, PermisoData[]>>((acc, p) => {
     if (!acc[p.modulo]) acc[p.modulo] = []
     acc[p.modulo].push(p)
     return acc
   }, {})
+
+  const MODULO_NAMES: Record<string, string> = {
+    CORE: "Core", RRHH: "RRHH", NOMINA: "Nómina", TAREAS: "Tareas",
+    INVENTARIO: "Inventario (Activos)", INVENTARIOS: "Inventarios",
+    DOCUMENTOS: "Documentos", CONTABILIDAD: "Contabilidad",
+    PRESUPUESTOS: "Presupuestos", TESORERIA: "Tesorería",
+    CLIENTES: "Clientes", PERMISOS: "Permisos",
+    REPORTES: "Reportes", COMPRAS: "Compras", PROVEEDORES: "Proveedores",
+    VENTAS: "Ventas", PEDIDOS: "Pedidos", DESPACHOS: "Despachos",
+    TRASPASOS: "Traspasos", OPERACIONES: "Operaciones",
+    CUENTAS_COBRAR: "Cuentas por Cobrar", DASHBOARD: "Dashboard",
+  }
+
+  const ACCION_NAMES: Record<string, string> = {
+    CREATE: "Crear", READ: "Ver", UPDATE: "Editar", DELETE: "Eliminar", ALL: "Total",
+    APROBAR: "Aprobar", RECHAZAR: "Rechazar", ANULAR: "Anular",
+    CERRAR: "Cerrar", REABRIR: "Reabrir", EXPORTAR: "Exportar",
+    IMPORTAR: "Importar", ENVIAR: "Enviar", DUPLICAR: "Duplicar",
+    CONCILIAR: "Conciliar",
+  }
+
+  const ACCIONES_BASICAS = ["CREATE", "READ", "UPDATE", "DELETE"]
+  const ACCIONES_EXTRA = ["APROBAR", "RECHAZAR", "ANULAR", "CERRAR", "REABRIR", "EXPORTAR", "IMPORTAR", "ENVIAR", "DUPLICAR", "CONCILIAR"]
+
+  const groupedRecursos = permisos.reduce<Record<string, Record<string, PermisoData[]>>>((acc, p) => {
+    if (!acc[p.modulo]) acc[p.modulo] = {}
+    if (!acc[p.modulo][p.recurso]) acc[p.modulo][p.recurso] = []
+    acc[p.modulo][p.recurso].push(p)
+    return acc
+  }, {})
+
+  function getRecursoPermisoIds(modulo: string, recurso: string): string[] {
+    return (groupedRecursos[modulo]?.[recurso] ?? []).map((p) => p.id)
+  }
+
+  function isRecursoAllChecked(modulo: string, recurso: string): boolean {
+    const ids = getRecursoPermisoIds(modulo, recurso)
+    return ids.length > 0 && ids.every((id) => permisosRol.includes(id))
+  }
+
+  function isRecursoEditChecked(modulo: string, recurso: string): boolean {
+    const perms = groupedRecursos[modulo]?.[recurso] ?? []
+    const editPerms = perms.filter((p) => ["READ", "CREATE", "UPDATE"].includes(p.accion))
+    return editPerms.length > 0 && editPerms.every((p) => permisosRol.includes(p.id))
+  }
+
+  function isRecursoReadChecked(modulo: string, recurso: string): boolean {
+    const perms = groupedRecursos[modulo]?.[recurso] ?? []
+    const readPerm = perms.find((p) => p.accion === "READ")
+    return readPerm ? permisosRol.includes(readPerm.id) : false
+  }
+
+  function setRecursoLevel(modulo: string, recurso: string, level: "none" | "read" | "edit" | "all") {
+    const perms = groupedRecursos[modulo]?.[recurso] ?? []
+    setPermisosRol((prev) => {
+      const ids = new Set(prev)
+      for (const p of perms) {
+        if (level === "none") ids.delete(p.id)
+        else if (level === "read") { if (p.accion === "READ") ids.add(p.id); else ids.delete(p.id) }
+        else if (level === "edit") { if (["READ", "CREATE", "UPDATE"].includes(p.accion)) ids.add(p.id); else ids.delete(p.id) }
+        else ids.add(p.id)
+      }
+      return [...ids]
+    })
+  }
+
+  function toggleExtraPermiso(permisoId: string) {
+    setPermisosRol((prev) => {
+      const ids = new Set(prev)
+      if (ids.has(permisoId)) ids.delete(permisoId)
+      else ids.add(permisoId)
+      return [...ids]
+    })
+  }
+
+  function getModuloLevel(modulo: string): "none" | "read" | "edit" | "all" {
+    const perms = groupedPermisos[modulo] ?? []
+    if (perms.length === 0) return "none"
+    const allChecked = perms.every((p) => permisosRol.includes(p.id))
+    if (allChecked) return "all"
+    const editPerms = perms.filter((p) => ["READ", "CREATE", "UPDATE"].includes(p.accion))
+    const editChecked = editPerms.length > 0 && editPerms.every((p) => permisosRol.includes(p.id))
+    const anyExtraChecked = perms.some((p) => !["READ", "CREATE", "UPDATE"].includes(p.accion) && permisosRol.includes(p.id))
+    if (editChecked && !anyExtraChecked) return "edit"
+    const readPerms = perms.filter((p) => p.accion === "READ")
+    const readChecked = readPerms.length > 0 && readPerms.every((p) => permisosRol.includes(p.id))
+    const anyNonReadChecked = perms.some((p) => p.accion !== "READ" && permisosRol.includes(p.id))
+    if (readChecked && !anyNonReadChecked) return "read"
+    return "none"
+  }
+
+  function setModuloLevel(modulo: string, level: "none" | "read" | "edit" | "all") {
+    const perms = groupedPermisos[modulo] ?? []
+    setPermisosRol((prev) => {
+      const ids = new Set(prev)
+      for (const p of perms) {
+        if (level === "none") ids.delete(p.id)
+        else if (level === "read") { if (p.accion === "READ") ids.add(p.id); else ids.delete(p.id) }
+        else if (level === "edit") { if (["READ", "CREATE", "UPDATE"].includes(p.accion)) ids.add(p.id); else ids.delete(p.id) }
+        else ids.add(p.id)
+      }
+      return [...ids]
+    })
+  }
 
   return (
     <div className="space-y-4">
@@ -856,49 +1022,130 @@ function RolesTab() {
       </FormDialog>
 
       {/* Permisos Dialog */}
-      <FormDialog
-        open={permisosOpen}
-        onOpenChange={setPermisosOpen}
-        title={`Permisos: ${editing?.nombre ?? ""}`}
-        description="Selecciona los permisos para este rol"
-        onSubmit={handleSavePermisos}
-        loading={saving}
-        submitLabel="Guardar Permisos"
-      >
-        {rolPermisosLoading ? (
-          <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-        ) : (
-          <div className="space-y-4 max-h-96 overflow-y-auto">
-            {Object.entries(groupedPermisos).map(([modulo, perms]) => (
-              <div key={modulo}>
-                <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">{modulo}</h4>
-                <div className="space-y-1 ml-2">
-                  {modulo === "CORE" && !isSuperAdmin && (
-                    <p className="text-xs text-muted-foreground italic px-2">
-                      Solo el super administrador puede modificar permisos del módulo CORE
-                    </p>
-                  )}
-                  {perms.map((p) => {
-                    const isCore = modulo === "CORE"
-                    return (
-                      <label key={p.id} className={`flex items-center gap-2 text-sm rounded px-2 py-1 ${isCore && !isSuperAdmin ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-accent"}`}>
-                        <input
-                          type="checkbox"
-                          checked={permisosRol.includes(p.id)}
-                          onChange={() => togglePermiso(p.id)}
-                          disabled={isCore && !isSuperAdmin}
-                          className="h-4 w-4 rounded border-gray-300"
-                        />
-                        <span className="font-medium">{formatearPermiso(p)}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-              </div>
-            ))}
+      <Dialog open={permisosOpen} onOpenChange={setPermisosOpen}>
+        <DialogContent
+          className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto"
+          onPointerDownOutside={(e) => {
+            const target = e.target as HTMLElement
+            if (target.closest("[data-radix-select-viewport]") || target.closest("[data-radix-popper-content-wrapper]")) {
+              e.preventDefault()
+            }
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{`Permisos: ${editing?.nombre ?? ""}`}</DialogTitle>
+            <DialogDescription>Configura los permisos detallados para este rol por módulo, recurso y acción</DialogDescription>
+          </DialogHeader>
+          {rolPermisosLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+          ) : (
+            <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+              {Object.keys(groupedPermisos).sort().map((modulo) => {
+                const level = getModuloLevel(modulo)
+                const isCore = modulo === "CORE"
+                const recursos = Object.keys(groupedRecursos[modulo] ?? {}).sort()
+                const isExpanded = level !== "none"
+                return (
+                  <div key={modulo} className={`rounded-md border ${isCore && !isSuperAdmin ? "opacity-50" : ""}`}>
+                    <div className="flex items-center justify-between px-3 py-2 bg-muted/50">
+                      <span className="text-sm font-semibold">{MODULO_NAMES[modulo] ?? modulo}</span>
+                      <Select
+                        value={level}
+                        onValueChange={(v) => setModuloLevel(modulo, v as "none" | "read" | "edit" | "all")}
+                        disabled={isCore && !isSuperAdmin}
+                      >
+                        <SelectTrigger className="w-44 h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Sin acceso</SelectItem>
+                          <SelectItem value="read">Solo lectura</SelectItem>
+                          <SelectItem value="edit">Ver + Editar</SelectItem>
+                          <SelectItem value="all">Acceso total</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {isExpanded && (
+                      <div className="px-3 py-2 space-y-2 border-t">
+                        {recursos.map((recurso) => {
+                          const recursoPerms = groupedRecursos[modulo][recurso]
+                          const extraPerms = recursoPerms.filter((p) => ACCIONES_EXTRA.includes(p.accion))
+                          return (
+                            <div key={recurso} className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground capitalize">{recurso.replace(/_/g, " ")}</span>
+                              <div className="flex items-center gap-2">
+                                <div className="flex gap-1">
+                                  {ACCIONES_BASICAS.map((accion) => {
+                                    const perm = recursoPerms.find((p) => p.accion === accion)
+                                    if (!perm) return null
+                                    const checked = permisosRol.includes(perm.id)
+                                    return (
+                                      <button
+                                        key={accion}
+                                        onClick={() => toggleExtraPermiso(perm.id)}
+                                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                                          checked
+                                            ? accion === "READ" ? "bg-blue-100 text-blue-700"
+                                            : accion === "CREATE" ? "bg-green-100 text-green-700"
+                                            : accion === "UPDATE" ? "bg-amber-100 text-amber-700"
+                                            : "bg-red-100 text-red-700"
+                                            : "bg-muted text-muted-foreground"
+                                        }`}
+                                        title={ACCION_NAMES[accion]}
+                                      >
+                                        {ACCION_NAMES[accion]?.charAt(0)}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                                {extraPerms.length > 0 && (
+                                  <div className="flex gap-1 border-l pl-2">
+                                    {extraPerms.map((perm) => {
+                                      const checked = permisosRol.includes(perm.id)
+                                      return (
+                                        <button
+                                          key={perm.id}
+                                          onClick={() => toggleExtraPermiso(perm.id)}
+                                          className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                                            checked
+                                              ? "bg-purple-100 text-purple-700"
+                                              : "bg-muted text-muted-foreground"
+                                          }`}
+                                          title={ACCION_NAMES[perm.accion] ?? perm.accion}
+                                        >
+                                          {(ACCION_NAMES[perm.accion] ?? perm.accion).charAt(0)}
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          <div className="mt-4 text-[10px] text-muted-foreground flex flex-wrap gap-3">
+            <span><span className="inline-block w-2 h-2 rounded bg-blue-400 mr-1" />Ver</span>
+            <span><span className="inline-block w-2 h-2 rounded bg-green-400 mr-1" />Crear</span>
+            <span><span className="inline-block w-2 h-2 rounded bg-amber-400 mr-1" />Editar</span>
+            <span><span className="inline-block w-2 h-2 rounded bg-red-400 mr-1" />Eliminar</span>
+            <span><span className="inline-block w-2 h-2 rounded bg-purple-400 mr-1" />Acciones extra</span>
           </div>
-        )}
-      </FormDialog>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setPermisosOpen(false)}>Cancelar</Button>
+            <Button onClick={handleSavePermisos} disabled={saving || rolPermisosLoading}>
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Guardar Permisos
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -1193,6 +1440,392 @@ function ContabilidadConfigTab() {
           </form>
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+// ─── Automatizaciones Tab ─────────────────────────────────
+
+interface AutomatizacionRow {
+  id: string
+  codigo: string
+  nombre: string
+  descripcion: string | null
+  modulo: string
+  evento: string
+  urlPowerAutomate: string
+  activo: boolean
+  token: string
+  createdAt: Date
+  _count?: { auditorias: number }
+}
+
+interface AuditoriaRow {
+  id: string
+  codigoEvento: string
+  entidadTipo: string
+  entidadId: string
+  respuestaHTTP: number | null
+  tiempoEjecucionMs: number | null
+  mensajeError: string | null
+  createdAt: Date
+  automatizacion: { codigo: string; nombre: string }
+  usuario: { nombre: string; email: string } | null
+}
+
+const eventosDisponibles = [
+  { codigo: "REQUISICION_CREADA", nombre: "Requisición Creada", modulo: "COMPRAS" },
+  { codigo: "REQUISICION_ENVIADA", nombre: "Requisición Enviada", modulo: "COMPRAS" },
+  { codigo: "OC_CREADA", nombre: "OC Creada", modulo: "COMPRAS" },
+  { codigo: "OC_APROBADA", nombre: "OC Aprobada", modulo: "COMPRAS" },
+  { codigo: "FACTURA_REGISTRADA", nombre: "Factura Registrada", modulo: "COMPRAS" },
+  { codigo: "PAGO_REALIZADO", nombre: "Pago Realizado", modulo: "TESORERIA" },
+  { codigo: "PROGRAMACION_CREADA", nombre: "Programación Creada", modulo: "OPERACIONES" },
+  { codigo: "PROGRAMACION_APROBADA", nombre: "Programación Aprobada", modulo: "OPERACIONES" },
+  { codigo: "ORDEN_CREADA", nombre: "Orden Operativa Creada", modulo: "OPERACIONES" },
+  { codigo: "ORDEN_ASIGNADA", nombre: "Orden Operativa Asignada", modulo: "OPERACIONES" },
+  { codigo: "DELIVERY_TICKET_CREADO", nombre: "DT Creado", modulo: "OPERACIONES" },
+  { codigo: "DELIVERY_TICKET_CONFIRMADO", nombre: "DT Confirmado", modulo: "OPERACIONES" },
+  { codigo: "DELIVERY_TICKET_CERRADO", nombre: "DT Cerrado", modulo: "OPERACIONES" },
+  { codigo: "PEDIDO_CREADO", nombre: "Pedido Creado", modulo: "PEDIDOS" },
+  { codigo: "PEDIDO_CONFIRMADO", nombre: "Pedido Confirmado", modulo: "PEDIDOS" },
+  { codigo: "VENTA_CREADA", nombre: "Venta Creada", modulo: "VENTAS" },
+  { codigo: "VENTA_CONFIRMADA", nombre: "Venta Confirmada", modulo: "VENTAS" },
+  { codigo: "DESPACHO_CREADO", nombre: "Despacho Creado", modulo: "DESPACHOS" },
+  { codigo: "DESPACHO_ENVIADO", nombre: "Despacho Enviado", modulo: "DESPACHOS" },
+  { codigo: "PRODUCTO_CREADO", nombre: "Producto Creado", modulo: "INVENTARIOS" },
+  { codigo: "STOCK_MINIMO", nombre: "Stock Mínimo", modulo: "INVENTARIOS" },
+  { codigo: "TRASPASO_COMPLETADO", nombre: "Traspaso Completado", modulo: "TRASPASOS" },
+  { codigo: "EMPLEADO_CREADO", nombre: "Empleado Creado", modulo: "RRHH" },
+  { codigo: "NOMINA_APROBADA", nombre: "Nómina Aprobada", modulo: "NOMINA" },
+  { codigo: "CUENTA_COBRAR_CREADA", nombre: "Cta. Cobrar Creada", modulo: "CUENTAS_COBRAR" },
+  { codigo: "RECIBO_CAJA_REGISTRADO", nombre: "Recibo de Caja", modulo: "CUENTAS_COBRAR" },
+]
+
+function AutomatizacionesTab() {
+  const { toast } = useToast()
+  const [data, setData] = useState<AutomatizacionRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editing, setEditing] = useState<AutomatizacionRow | null>(null)
+  const [search, setSearch] = useState("")
+  const [form, setForm] = useState({
+    codigo: "",
+    nombre: "",
+    descripcion: "",
+    modulo: "",
+    evento: "",
+    urlPowerAutomate: "",
+  })
+  const [auditoriaOpen, setAuditoriaOpen] = useState(false)
+  const [auditoriaData, setAuditoriaData] = useState<AuditoriaRow[]>([])
+  const [auditoriaLoading, setAuditoriaLoading] = useState(false)
+  const [tokenVisible, setTokenVisible] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const result = await getAutomatizaciones()
+      setData(result)
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Error al cargar", variant: "destructive" })
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = data.filter((a) =>
+    a.codigo.toLowerCase().includes(search.toLowerCase()) ||
+    a.nombre.toLowerCase().includes(search.toLowerCase()) ||
+    a.modulo.toLowerCase().includes(search.toLowerCase())
+  )
+
+  function openCreate() {
+    setEditing(null)
+    setForm({ codigo: "", nombre: "", descripcion: "", modulo: "", evento: "", urlPowerAutomate: "" })
+    setDialogOpen(true)
+  }
+
+  function openEdit(item: AutomatizacionRow) {
+    setEditing(item)
+    setForm({
+      codigo: item.codigo,
+      nombre: item.nombre,
+      descripcion: item.descripcion || "",
+      modulo: item.modulo,
+      evento: item.evento,
+      urlPowerAutomate: item.urlPowerAutomate || "",
+    })
+    setDialogOpen(true)
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const payload = {
+        ...form,
+        descripcion: form.descripcion || undefined,
+      }
+      if (editing) {
+        await updateAutomatizacion(editing.id, payload)
+        toast({ title: "Automatización actualizada", variant: "success" })
+      } else {
+        await createAutomatizacion(payload)
+        toast({ title: "Automatización creada", variant: "success" })
+      }
+      setDialogOpen(false)
+      await load()
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Error al guardar", variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleToggle(id: string) {
+    try {
+      await toggleAutomatizacionActiva(id)
+      await load()
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Error", variant: "destructive" })
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("¿Eliminar esta automatización?")) return
+    try {
+      await deleteAutomatizacion(id)
+      await load()
+      toast({ title: "Automatización eliminada", variant: "success" })
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Error", variant: "destructive" })
+    }
+  }
+
+  async function handleRegenerarToken(id: string) {
+    if (!confirm("¿Regenerar el token? El token anterior dejará de funcionar.")) return
+    try {
+      const result = await regenerarToken(id)
+      setTokenVisible(result.token)
+      await load()
+      toast({ title: "Token regenerado", variant: "success" })
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Error", variant: "destructive" })
+    }
+  }
+
+  async function openAuditoria(automatizacionId?: string) {
+    setAuditoriaOpen(true)
+    setAuditoriaLoading(true)
+    try {
+      const result = await getAuditoriaAutomatizaciones({ automatizacionId, limit: 50 })
+      setAuditoriaData(result.auditorias as any)
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Error", variant: "destructive" })
+    } finally {
+      setAuditoriaLoading(false)
+    }
+  }
+
+  function copyToken(token: string) {
+    navigator.clipboard.writeText(token)
+    toast({ title: "Token copiado", variant: "success" })
+  }
+
+  const columns: Column<AutomatizacionRow>[] = [
+    { key: "codigo", header: "Código", className: "font-mono text-xs" },
+    { key: "nombre", header: "Nombre" },
+    {
+      key: "modulo",
+      header: "Módulo",
+      render: (item) => (
+        <Badge variant={item.modulo === "OPERACIONES" ? "info" : item.modulo === "COMPRAS" ? "default" : "secondary"}>
+          {item.modulo}
+        </Badge>
+      ),
+    },
+    { key: "evento", header: "Evento", hideOnMobile: true, className: "font-mono text-xs" },
+    {
+      key: "activo",
+      header: "Estado",
+      render: (item) => (
+        <Badge variant={item.activo ? "success" : "secondary"}>
+          {item.activo ? "Activo" : "Inactivo"}
+        </Badge>
+      ),
+    },
+    {
+      key: "auditorias",
+      header: "Ejecuciones",
+      hideOnMobile: true,
+      render: (item) => (
+        <Button variant="ghost" size="sm" onClick={() => openAuditoria(item.id)}>
+          <Eye className="h-4 w-4 mr-1" />
+          {item._count?.auditorias || 0}
+        </Button>
+      ),
+    },
+    {
+      key: "acciones",
+      header: "",
+      className: "w-[180px]",
+      render: (item) => (
+        <div className="flex items-center gap-0.5">
+          <Button variant="ghost" size="icon" title="Editar" onClick={() => openEdit(item)}>
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" title={item.activo ? "Desactivar" : "Activar"} onClick={() => handleToggle(item.id)}>
+            {item.activo ? <ToggleRight className="h-4 w-4 text-green-600" /> : <ToggleLeft className="h-4 w-4" />}
+          </Button>
+          <Button variant="ghost" size="icon" title="Copiar token" onClick={() => copyToken(item.token)}>
+            <Copy className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" title="Regenerar token" onClick={() => handleRegenerarToken(item.id)}>
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" title="Eliminar" onClick={() => handleDelete(item.id)}>
+            <Trash2 className="h-4 w-4 text-destructive" />
+          </Button>
+        </div>
+      ),
+    },
+  ]
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Configura las integraciones con Power Automate. Cada evento envía un webhook con el ID del documento.
+        </p>
+        <Button onClick={openCreate}>
+          <PlusCircle className="mr-2 h-4 w-4" />Nueva Automatización
+        </Button>
+      </div>
+
+      <DataTable
+        columns={columns}
+        data={filtered}
+        loading={loading}
+        searchable
+        searchPlaceholder="Buscar por código, nombre o módulo..."
+        onSearch={setSearch}
+        mobileCardTitle={(item) => <span className="font-medium">{item.nombre}</span>}
+      />
+
+      <FormDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        title={editing ? "Editar Automatización" : "Nueva Automatización"}
+        onSubmit={handleSave}
+        loading={saving}
+        className="max-w-2xl"
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Evento</Label>
+            <Select
+              value={form.codigo}
+              onValueChange={(v) => {
+                const ev = eventosDisponibles.find((e) => e.codigo === v)
+                if (ev) {
+                  setForm({ ...form, codigo: v, nombre: ev.nombre, modulo: ev.modulo, evento: v })
+                }
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Seleccionar evento" />
+              </SelectTrigger>
+              <SelectContent>
+                {eventosDisponibles.map((ev) => (
+                  <SelectItem key={ev.codigo} value={ev.codigo}>
+                    {ev.nombre} ({ev.modulo})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Código</Label>
+            <Input value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value })} required />
+          </div>
+          <div className="space-y-2">
+            <Label>Nombre</Label>
+            <Input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} required />
+          </div>
+          <div className="space-y-2">
+            <Label>Módulo</Label>
+            <Input value={form.modulo} disabled />
+          </div>
+          <div className="space-y-2 sm:col-span-2">
+            <Label>Descripción</Label>
+            <Input value={form.descripcion} onChange={(e) => setForm({ ...form, descripcion: e.target.value })} />
+          </div>
+          <div className="space-y-2 sm:col-span-2">
+            <Label>URL Power Automate (Webhook)</Label>
+            <Input
+              value={form.urlPowerAutomate}
+              onChange={(e) => setForm({ ...form, urlPowerAutomate: e.target.value })}
+              placeholder="https://prod-xx.region.logic.azure.com/workflows/..."
+              type="url"
+            />
+          </div>
+        </div>
+        {editing && (
+          <div className="mt-4 p-3 bg-muted rounded-md">
+            <p className="text-xs text-muted-foreground mb-1">Token de autenticación:</p>
+            <div className="flex items-center gap-2">
+              <code className="text-xs font-mono break-all bg-background px-2 py-1 rounded flex-1">
+                {tokenVisible || editing.token}
+              </code>
+              <Button type="button" variant="ghost" size="icon" onClick={() => copyToken(editing.token)}>
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </FormDialog>
+
+      {/* Auditoría Dialog */}
+      <Dialog open={auditoriaOpen} onOpenChange={setAuditoriaOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Historial de Ejecuciones</DialogTitle>
+            <DialogDescription>Últimas ejecuciones de automatizaciones enviadas a Power Automate</DialogDescription>
+          </DialogHeader>
+          {auditoriaLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
+          ) : auditoriaData.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">No hay ejecuciones registradas</p>
+          ) : (
+            <div className="space-y-2">
+              {auditoriaData.map((a) => (
+                <div key={a.id} className="flex items-center justify-between p-3 border rounded-md text-sm">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Badge variant={a.respuestaHTTP && a.respuestaHTTP < 400 ? "success" : "destructive"}>
+                        {a.respuestaHTTP || "N/A"}
+                      </Badge>
+                      <span className="font-mono text-xs">{a.codigoEvento}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {a.entidadTipo} · {a.tiempoEjecucionMs || 0}ms
+                      {a.mensajeError && <span className="text-destructive ml-2">· {a.mensajeError}</span>}
+                    </div>
+                  </div>
+                  <div className="text-right text-xs text-muted-foreground">
+                    <div>{a.usuario?.nombre || "Sistema"}</div>
+                    <div>{new Date(a.createdAt).toLocaleString()}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

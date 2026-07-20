@@ -57,6 +57,58 @@ export async function getCuentas() {
   return cuentas.map(serializeCuenta)
 }
 
+export async function getPagosByCuentaId(cuentaId: string) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "cuenta_bancaria", accion: "READ" })
+  const pagos = await prisma.pago.findMany({
+    where: { cuentaBancariaId: cuentaId, empresaId },
+    include: {
+      proveedor: { select: { razonSocial: true, nit: true } },
+      cuentaPagar: { select: { numeroFactura: true, valor: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  })
+  return pagos.map((p) => ({
+    ...p,
+    valor: Number(p.valor),
+    fechaPago: p.fechaPago instanceof Date ? p.fechaPago.toISOString() : p.fechaPago,
+    createdAt: p.createdAt instanceof Date ? p.createdAt.toISOString() : p.createdAt,
+    updatedAt: p.updatedAt instanceof Date ? p.updatedAt.toISOString() : p.updatedAt,
+    cuentaPagar: p.cuentaPagar ? { ...p.cuentaPagar, valor: Number(p.cuentaPagar.valor) } : null,
+  }))
+}
+
+export async function ajustarSaldoCuenta(cuentaId: string, monto: number, descripcion?: string) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "cuenta_bancaria", accion: "UPDATE" })
+  if (!monto || monto <= 0) throw new Error("El monto debe ser mayor a 0")
+
+  const cuenta = await prisma.cuentaBancaria.findFirst({
+    where: { id: cuentaId, empresaId, activo: true },
+  })
+  if (!cuenta) throw new Error("Cuenta no encontrada")
+
+  await prisma.$transaction(async (tx: any) => {
+    await tx.movimientoBancario.create({
+      data: {
+        cuentaId,
+        tipo: "INGRESO",
+        fecha: new Date(),
+        monto,
+        descripcion: descripcion || "Ajuste de saldo",
+        referencia: null,
+      },
+    })
+    await tx.cuentaBancaria.update({
+      where: { id: cuentaId },
+      data: { saldoActual: { increment: monto } },
+    })
+  })
+
+  revalidatePath("/tesoreria")
+  return { success: true }
+}
+
 export async function createCuenta(data: CuentaInput) {
   const { empresaId, userId } = await verifySession()
   await verificarPermiso(userId, { recurso: "cuenta_bancaria", accion: "CREATE" })
@@ -128,9 +180,14 @@ export async function deleteCuenta(id: string) {
 export async function getMovimientos(cuentaId: string) {
   const { empresaId, userId } = await verifySession()
   await verificarPermiso(userId, { recurso: "movimiento_bancario", accion: "READ" })
+  const cuenta = await prisma.cuentaBancaria.findFirst({
+    where: { id: cuentaId, empresaId },
+  })
+  if (!cuenta) throw new Error("Cuenta no encontrada")
   const movimientos = await prisma.movimientoBancario.findMany({
     where: { cuentaId },
     orderBy: { fecha: "desc" },
+    include: { cuenta: { select: { banco: true, numeroCuenta: true } } },
   })
   return movimientos.map(serializeMovimiento)
 }
@@ -148,8 +205,8 @@ export async function createMovimiento(data: MovimientoInput) {
   const monto = parsed.monto
   const saldoDelta = parsed.tipo === "INGRESO" ? monto : -monto
 
-  const [movimiento] = await prisma.$transaction([
-    prisma.movimientoBancario.create({
+  const movimiento = await prisma.$transaction(async (tx: any) => {
+    const mov = await tx.movimientoBancario.create({
       data: {
         cuentaId: parsed.cuentaId,
         tipo: parsed.tipo,
@@ -158,12 +215,13 @@ export async function createMovimiento(data: MovimientoInput) {
         descripcion: parsed.descripcion || null,
         referencia: parsed.referencia || null,
       },
-    }),
-    prisma.cuentaBancaria.update({
+    })
+    await tx.cuentaBancaria.update({
       where: { id: parsed.cuentaId },
       data: { saldoActual: { increment: saldoDelta } },
-    }),
-  ])
+    })
+    return mov
+  })
 
   revalidatePath("/tesoreria")
   return { success: true, movimiento: serializeMovimiento(movimiento) }
@@ -177,17 +235,23 @@ export async function updateMovimiento(id: string, data: MovimientoInput) {
   const oldMov = await prisma.movimientoBancario.findUnique({ where: { id } })
   if (!oldMov) throw new Error("Movimiento no encontrado")
 
-  const cuenta = await prisma.cuentaBancaria.findFirst({
+  const oldCuenta = await prisma.cuentaBancaria.findFirst({
+    where: { id: oldMov.cuentaId, empresaId },
+  })
+  if (!oldCuenta) throw new Error("Cuenta original no encontrada")
+
+  const newCuenta = await prisma.cuentaBancaria.findFirst({
     where: { id: parsed.cuentaId, empresaId },
   })
-  if (!cuenta) throw new Error("Cuenta no encontrada")
+  if (!newCuenta) throw new Error("Cuenta destino no encontrada")
 
   const oldImpact = oldMov.tipo === "INGRESO" ? Number(oldMov.monto) : -Number(oldMov.monto)
   const newImpact = parsed.tipo === "INGRESO" ? parsed.monto : -parsed.monto
   const saldoAjuste = newImpact - oldImpact
+  const cambiaCuenta = oldMov.cuentaId !== parsed.cuentaId
 
-  const [movimiento] = await prisma.$transaction([
-    prisma.movimientoBancario.update({
+  const movimiento = await prisma.$transaction(async (tx: any) => {
+    const mov = await tx.movimientoBancario.update({
       where: { id },
       data: {
         tipo: parsed.tipo,
@@ -196,12 +260,25 @@ export async function updateMovimiento(id: string, data: MovimientoInput) {
         descripcion: parsed.descripcion || null,
         referencia: parsed.referencia || null,
       },
-    }),
-    prisma.cuentaBancaria.update({
-      where: { id: parsed.cuentaId },
-      data: { saldoActual: { increment: saldoAjuste } },
-    }),
-  ])
+    })
+
+    if (cambiaCuenta) {
+      await tx.cuentaBancaria.update({
+        where: { id: oldMov.cuentaId },
+        data: { saldoActual: { decrement: oldImpact } },
+      })
+      await tx.cuentaBancaria.update({
+        where: { id: parsed.cuentaId },
+        data: { saldoActual: { increment: newImpact } },
+      })
+    } else {
+      await tx.cuentaBancaria.update({
+        where: { id: parsed.cuentaId },
+        data: { saldoActual: { increment: saldoAjuste } },
+      })
+    }
+    return mov
+  })
 
   revalidatePath("/tesoreria")
   return { success: true, movimiento: serializeMovimiento(movimiento) }
@@ -213,15 +290,20 @@ export async function deleteMovimiento(id: string) {
   const oldMov = await prisma.movimientoBancario.findUnique({ where: { id } })
   if (!oldMov) throw new Error("Movimiento no encontrado")
 
+  const cuenta = await prisma.cuentaBancaria.findFirst({
+    where: { id: oldMov.cuentaId, empresaId },
+  })
+  if (!cuenta) throw new Error("Cuenta no encontrada")
+
   const impact = oldMov.tipo === "INGRESO" ? Number(oldMov.monto) : -Number(oldMov.monto)
 
-  await prisma.$transaction([
-    prisma.movimientoBancario.delete({ where: { id } }),
-    prisma.cuentaBancaria.update({
+  await prisma.$transaction(async (tx: any) => {
+    await tx.movimientoBancario.delete({ where: { id } })
+    await tx.cuentaBancaria.update({
       where: { id: oldMov.cuentaId },
       data: { saldoActual: { increment: -impact } },
-    }),
-  ])
+    })
+  })
 
   revalidatePath("/tesoreria")
   return { success: true }
@@ -229,9 +311,15 @@ export async function deleteMovimiento(id: string) {
 
 export async function conciliarMovimiento(id: string) {
   const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "movimiento_bancario", accion: "UPDATE" })
+  await verificarPermiso(userId, { recurso: "movimiento_bancario", accion: "CONCILIAR" })
   const mov = await prisma.movimientoBancario.findUnique({ where: { id } })
   if (!mov) throw new Error("Movimiento no encontrado")
+
+  const cuenta = await prisma.cuentaBancaria.findFirst({
+    where: { id: mov.cuentaId, empresaId },
+  })
+  if (!cuenta) throw new Error("Cuenta no encontrada")
+
   if (mov.estado !== "PENDIENTE") throw new Error("Solo se pueden conciliar movimientos pendientes")
 
   const updated = await prisma.movimientoBancario.update({

@@ -12,7 +12,7 @@ export const verifySession = cache(async () => {
   return {
     userId: sessionUser.id,
     empresaId: sessionUser.empresaId as string,
-    empresas: (sessionUser.empresas ?? []) as { id: string; nombre: string; rfc: string | null }[],
+    empresas: (sessionUser.empresas ?? []) as { id: string; nombre: string; rfc: string | null; logo: string | null }[],
     roles: (sessionUser.roles ?? []) as string[],
     superAdmin: (sessionUser.superAdmin ?? false) as boolean,
   }

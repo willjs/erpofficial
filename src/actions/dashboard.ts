@@ -68,7 +68,7 @@ export async function getDashboardData(): Promise<{ data: DashboardData | null; 
     const weekAgo = new Date(Date.now() - 7 * 86400000)
 
     const batch1 = await Promise.all([
-      prisma.requisicion.count({ where: { empresaId, estado: "PENDIENTE_APROBACION" } }).catch(() => 0),
+      prisma.requisicion.count({ where: { empresaId, estado: "EN_COTIZACION" } }).catch(() => 0),
       prisma.ordenCompra.count({ where: { empresaId, estado: "EMITIDA" } }).catch(() => 0),
       prisma.ordenCompra.aggregate({ where: { empresaId, fecha: { gte: startOfMonth } }, _sum: { valorTotal: true } }).catch(() => ({ _sum: { valorTotal: 0 } })),
       prisma.cuentaPagar.count({ where: { empresaId, estado: { not: "PAGADA" } } }).catch(() => 0),

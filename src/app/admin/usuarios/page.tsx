@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from "react"
 import {
   getUsuariosAdmin, toggleSuperAdmin, toggleUsuarioActivoAdmin, createUsuarioAdmin, updateUsuarioAdmin,
+  getEmpresas, getRolesAdmin, asignarEmpresaAUsuario, removerEmpresaDeUsuario,
 } from "@/actions/admin"
-import { getEmpresas } from "@/actions/admin"
 import { PageHeader } from "@/components/shared/page-header"
 import { DataTable, type Column } from "@/components/shared/data-table"
 import { FormDialog } from "@/components/shared/form-dialog"
@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   PlusCircle, Shield, ShieldOff, ToggleLeft, ToggleRight, Pencil,
 } from "lucide-react"
@@ -25,6 +26,7 @@ interface UsuarioAdminData {
   activo: boolean
   superAdmin: boolean
   empresa: { id: string; nombre: string } | null
+  empresas: { empresa: { id: string; nombre: string } }[]
   roles: { rol: { id: string; nombre: string } }[]
 }
 
@@ -33,27 +35,50 @@ interface EmpresaOption {
   nombre: string
 }
 
+interface RolOption {
+  id: string
+  nombre: string
+}
+
 export default function AdminUsuariosPage() {
   const [data, setData] = useState<UsuarioAdminData[]>([])
   const [empresas, setEmpresas] = useState<EmpresaOption[]>([])
+  const [roles, setRoles] = useState<RolOption[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState("")
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<UsuarioAdminData | null>(null)
   const [form, setForm] = useState({
-    empresaId: "", nombre: "", apellido: "", email: "", password: "",
+    empresaId: "", nombre: "", apellido: "", email: "", password: "", rolId: "",
   })
+  const [selectedEmpresas, setSelectedEmpresas] = useState<string[]>([])
+
+  const loadRoles = useCallback(async (empresaId: string) => {
+    if (!empresaId || empresaId === "none") {
+      setRoles([])
+      return
+    }
+    try {
+      const rolesData = await getRolesAdmin(empresaId)
+      setRoles(rolesData.map((r: any) => ({ id: r.id, nombre: r.nombre })))
+    } catch {
+      setRoles([])
+    }
+  }, [])
 
   const load = useCallback(async () => {
     try {
       const [usuarios, emps] = await Promise.all([getUsuariosAdmin(), getEmpresas()])
       setData(usuarios as UsuarioAdminData[])
       setEmpresas(emps.map((e: any) => ({ id: e.id, nombre: e.nombre })))
+      if (emps.length > 0) {
+        loadRoles(emps[0].id)
+      }
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [loadRoles])
 
   useEffect(() => {
     setLoading(true)
@@ -62,18 +87,30 @@ export default function AdminUsuariosPage() {
 
   function openCreate() {
     setEditing(null)
-    setForm({ empresaId: "none", nombre: "", apellido: "", email: "", password: "" })
+    setForm({ empresaId: "none", nombre: "", apellido: "", email: "", password: "", rolId: "__none__" })
+    setSelectedEmpresas([])
+    const firstEmpresa = empresas[0]
+    if (firstEmpresa) {
+      setForm((prev) => ({ ...prev, empresaId: firstEmpresa.id }))
+      setSelectedEmpresas([firstEmpresa.id])
+      loadRoles(firstEmpresa.id)
+    }
     setDialogOpen(true)
   }
 
   function openEdit(u: UsuarioAdminData) {
     setEditing(u)
+    const empId = u.empresa?.id ?? "none"
+    if (empId !== "none") loadRoles(empId)
+    const linkedEmpresas = u.empresas.map((ue) => ue.empresa.id)
+    setSelectedEmpresas(linkedEmpresas.length > 0 ? linkedEmpresas : empId !== "none" ? [empId] : [])
     setForm({
-      empresaId: u.empresa?.id ?? "none",
+      empresaId: empId,
       nombre: u.nombre,
       apellido: u.apellido ?? "",
       email: u.email,
       password: "",
+      rolId: u.roles[0]?.rol?.id ?? "__none__",
     })
     setDialogOpen(true)
   }
@@ -90,18 +127,38 @@ export default function AdminUsuariosPage() {
           apellido: form.apellido || undefined,
           email: form.email,
           password: form.password || undefined,
+          rolId: form.rolId && form.rolId !== "__none__" ? form.rolId : null,
         })
+        // Sync empresas vinculadas
+        const currentLinked = editing.empresas.map((ue) => ue.empresa.id)
+        for (const eid of selectedEmpresas) {
+          if (!currentLinked.includes(eid)) {
+            await asignarEmpresaAUsuario(editing.id, eid)
+          }
+        }
+        for (const eid of currentLinked) {
+          if (!selectedEmpresas.includes(eid)) {
+            await removerEmpresaDeUsuario(editing.id, eid)
+          }
+        }
       } else {
         if (!empId) {
           throw new Error("Debe seleccionar una empresa para el usuario")
         }
-        await createUsuarioAdmin({
+        const newUser = await createUsuarioAdmin({
           empresaId: empId,
           nombre: form.nombre,
           apellido: form.apellido || undefined,
           email: form.email,
           password: form.password,
+          rolId: form.rolId && form.rolId !== "__none__" ? form.rolId : undefined,
         })
+        // Asignar empresas adicionales seleccionadas
+        for (const eid of selectedEmpresas) {
+          if (eid !== empId) {
+            await asignarEmpresaAUsuario((newUser as any).id, eid)
+          }
+        }
       }
       setDialogOpen(false)
       await load()
@@ -122,10 +179,11 @@ export default function AdminUsuariosPage() {
     await load()
   }
 
-  const filtered = data.filter((u) =>
-    `${u.nombre} ${u.apellido ?? ""} ${u.email} ${u.empresa?.nombre ?? "Sin Empresa"}`
+  const filtered = data.filter((u) => {
+    const allEmpresas = u.empresas.map((ue) => ue.empresa.nombre).join(" ")
+    return `${u.nombre} ${u.apellido ?? ""} ${u.email} ${allEmpresas}`
       .toLowerCase().includes(search.toLowerCase())
-  )
+  })
 
   const columns: Column<UsuarioAdminData>[] = [
     {
@@ -134,8 +192,18 @@ export default function AdminUsuariosPage() {
     },
     { key: "email", header: "Email" },
     {
-      key: "empresa", header: "Empresa",
-      render: (u) => <Badge variant="outline">{u.empresa?.nombre ?? "Sin Empresa"}</Badge>,
+      key: "empresa", header: "Empresas",
+      render: (u) => {
+        const allEmpresas = u.empresas.map((ue) => ue.empresa.nombre)
+        if (allEmpresas.length === 0) return <Badge variant="outline">{u.empresa?.nombre ?? "Sin Empresa"}</Badge>
+        return (
+          <div className="flex gap-1 flex-wrap">
+            {allEmpresas.map((nombre) => (
+              <Badge key={nombre} variant="outline">{nombre}</Badge>
+            ))}
+          </div>
+        )
+      },
     },
     {
       key: "superAdmin", header: "Super Admin",
@@ -226,9 +294,9 @@ export default function AdminUsuariosPage() {
       >
         <div className="space-y-3">
           <div>
-            <Label htmlFor="usr-empresa">Empresa</Label>
-            <Select value={form.empresaId} onValueChange={(v) => setForm({ ...form, empresaId: v })}>
-              <SelectTrigger id="usr-empresa"><SelectValue placeholder="Seleccionar empresa" /></SelectTrigger>
+            <Label>Empresa principal</Label>
+            <Select value={form.empresaId} onValueChange={(v) => { setForm({ ...form, empresaId: v, rolId: "" }); loadRoles(v); if (v !== "none" && !selectedEmpresas.includes(v)) setSelectedEmpresas([...selectedEmpresas, v]) }}>
+              <SelectTrigger><SelectValue placeholder="Seleccionar empresa" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">Sin Empresa</SelectItem>
                 {empresas.map((e) => (
@@ -236,6 +304,32 @@ export default function AdminUsuariosPage() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div>
+            <Label>Empresas vinculadas</Label>
+            <div className="border rounded-md p-3 space-y-2 max-h-40 overflow-y-auto">
+              {empresas.map((e) => (
+                <label key={e.id} className="flex items-center gap-2 cursor-pointer">
+                  <Checkbox
+                    checked={selectedEmpresas.includes(e.id)}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        setSelectedEmpresas([...selectedEmpresas, e.id])
+                      } else {
+                        setSelectedEmpresas(selectedEmpresas.filter((id) => id !== e.id))
+                      }
+                    }}
+                  />
+                  <span className="text-sm">{e.nombre}</span>
+                  {e.id === form.empresaId && (
+                    <Badge variant="secondary" className="text-[10px] ml-auto">Principal</Badge>
+                  )}
+                </label>
+              ))}
+              {empresas.length === 0 && (
+                <p className="text-sm text-muted-foreground">No hay empresas disponibles</p>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -254,6 +348,18 @@ export default function AdminUsuariosPage() {
           <div>
             <Label htmlFor="usr-password">{editing ? "Contraseña (dejar vacío para mantener)" : "Contraseña"}</Label>
             <Input id="usr-password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required={!editing} />
+          </div>
+          <div>
+            <Label htmlFor="usr-rol">Rol</Label>
+            <Select value={form.rolId} onValueChange={(v) => setForm({ ...form, rolId: v })}>
+              <SelectTrigger id="usr-rol"><SelectValue placeholder="Seleccionar rol" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Sin rol</SelectItem>
+                {roles.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>{r.nombre}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       </FormDialog>

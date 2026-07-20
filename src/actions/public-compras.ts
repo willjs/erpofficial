@@ -121,7 +121,7 @@ export async function crearRequisicionPublica(
         areaSolicitante: areaNombre,
         requeridoPor: validated.data.solicitante,
         prioridad: prioridadMap[validated.data.prioridad],
-        estado: "PENDIENTE_APROBACION",
+        estado: "EN_COTIZACION",
         observaciones: validated.data.observaciones ?? null,
         archivos: archivos.length > 0 ? archivos : undefined,
         items: {

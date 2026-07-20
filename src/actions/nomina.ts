@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { serializar } from "@/lib/utils"
 import { verificarPermiso } from "@/lib/permisos"
+import { AutomationService } from "@/lib/automation-service"
 
 export async function generarNominasMasivo(data: {
   periodo: string
@@ -312,6 +313,14 @@ export async function aprobarNomina(id: string) {
     where: { id },
     data: { estado: "APROBADA" },
   })
+
+  AutomationService.ejecutarEvento({
+    empresaId,
+    codigoEvento: "NOMINA_APROBADA",
+    entidadTipo: "NOMINA",
+    entidadId: id,
+    usuarioId: userId,
+  }).catch(() => {})
 
   revalidatePath("/nomina")
   return serializar(updated)

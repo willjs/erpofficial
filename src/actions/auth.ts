@@ -9,6 +9,7 @@ import { redirect } from "next/navigation"
 const loginSchema = z.object({
   email: z.string().email("Email inválido"),
   password: z.string().min(1, "Contraseña requerida"),
+  empresaId: z.string().optional(),
 })
 
 export type LoginState = { error?: string } | undefined
@@ -17,6 +18,7 @@ export async function login(prevState: LoginState, formData: FormData): Promise<
   const validated = loginSchema.safeParse({
     email: formData.get("email"),
     password: formData.get("password"),
+    empresaId: formData.get("empresaId") || undefined,
   })
 
   if (!validated.success) {
@@ -24,12 +26,30 @@ export async function login(prevState: LoginState, formData: FormData): Promise<
   }
 
   try {
+    // Si se seleccionó una empresa, verificar acceso y establecerla como activa
+    if (validated.data.empresaId) {
+      const user = await prisma.usuario.findUnique({ where: { email: validated.data.email } })
+      if (user) {
+        const hasAccess = await prisma.usuarioEmpresa.findUnique({
+          where: { usuarioId_empresaId: { usuarioId: user.id, empresaId: validated.data.empresaId } },
+        })
+        if (hasAccess) {
+          await prisma.usuario.update({
+            where: { id: user.id },
+            data: { empresaActivaId: validated.data.empresaId },
+          })
+        }
+      }
+    }
+
     await signIn("credentials", {
       email: validated.data.email,
       password: validated.data.password,
       redirectTo: "/",
     })
   } catch (error: any) {
+    // Next.js redirects throw a special error — let it propagate
+    if (error?.digest?.startsWith("NEXT_REDIRECT")) throw error
     if (error?.type === "CredentialsSignin") {
       return { error: "Email o contraseña incorrectos" }
     }

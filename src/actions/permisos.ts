@@ -204,7 +204,7 @@ export async function deleteSolicitudPermiso(id: string) {
 
 export async function aprobarSolicitud(id: string) {
   const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "solicitud_permiso", accion: "UPDATE" })
+  await verificarPermiso(userId, { recurso: "solicitud_permiso", accion: "APROBAR" })
   const solicitud = await prisma.solicitudPermiso.findFirst({
     where: { id, empleado: { empresaId }, estado: "PENDIENTE" },
   })
@@ -222,7 +222,7 @@ export async function aprobarSolicitud(id: string) {
 
 export async function rechazarSolicitud(id: string) {
   const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "solicitud_permiso", accion: "UPDATE" })
+  await verificarPermiso(userId, { recurso: "solicitud_permiso", accion: "RECHAZAR" })
   const solicitud = await prisma.solicitudPermiso.findFirst({
     where: { id, empleado: { empresaId }, estado: "PENDIENTE" },
   })

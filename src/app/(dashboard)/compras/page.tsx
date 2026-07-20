@@ -1,6 +1,8 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useToast } from "@/components/ui/use-toast"
 import * as XLSX from "xlsx"
 import * as Tabs from "@radix-ui/react-tabs"
@@ -10,6 +12,7 @@ import { FormDialog } from "@/components/shared/form-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { MoneyInput } from "@/components/ui/money-input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -21,10 +24,11 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog"
 import {
-  Plus, Pencil, Trash2, Eye, Send, CheckCircle, XCircle, FileText,
-  ShoppingCart, DollarSign, Package, Truck, Users, Building2, Settings, Save,
+  Plus, Pencil, Trash2, Eye, Send, CheckCircle, FileText,
+  ShoppingCart, DollarSign, Truck, Building2, Save, Copy,
+  Link as LinkIcon, Loader2, Undo2,
 } from "lucide-react"
-import { formatMoney, formatDate } from "@/lib/utils"
+import { formatMoney, formatDate, uuid } from "@/lib/utils"
 import HistorialEstados from "@/components/compras/historial-estados"
 
 type CentroCostos = { id: string; codigo: string; nombre: string; descripcion: string | null }
@@ -33,42 +37,42 @@ type Proveedor = { id: string; razonSocial: string; nit: string; contacto: strin
 type ReqItem = { id: string; item: number; descripcion: string; centroCostosId: string | null; centroCostos: CentroCostos | null; unidadMedida: string; cantidadSolicitada: number }
 type Requisicion = { id: string; empresaId: string; numero: number; fecha: string; areaSolicitante: string; requeridoPor: string; autorizadoPor: string | null; destino: string | null; prioridad: string; estado: string; observaciones: string | null; items: ReqItem[]; _count?: { cotizaciones: number; ordenesCompra: number } }
 
-type CotItem = { id: string; item: number; descripcion: string; unidadMedida: string; cantidad: number; valorUnitario: number; valorTotal: number }
-type Cotizacion = { id: string; requisicionId: string; proveedorId: string; proveedor: Proveedor; numero: number; fecha: string; valorTotal: number; tiempoEntrega: string | null; formaPago: string | null; ganadora: boolean; observaciones: string | null; items: CotItem[] }
+type CotItem = { id: string; item: number; descripcion: string; unidadMedida: string; cantidad: number; valorUnitario: number; valorTotal: number; valorProveedor1: number | null; valorProveedor2: number | null; valorProveedor3: number | null }
+type CotPanelItem = { item: number; descripcion: string; unidadMedida: string; cantidad: number; valorUnitario: number; valorTotal: number }
+type CotPanelArchivo = { key: string; nombre: string; base64?: string; url?: string }
+type CotPanel = {
+  proveedorId: string
+  tiempoEntrega: string
+  formaPago: string
+  observaciones: string
+  items: CotPanelItem[]
+  archivos: CotPanelArchivo[]
+}
+type Cotizacion = { id: string; requisicionId: string; requisicion?: { id: string; numero: number }; proveedorId: string; proveedor: Proveedor; numero: number; fecha: string; valorTotal: number; tiempoEntrega: string | null; formaPago: string | null; ganadora: boolean; observaciones: string | null; items: CotItem[]; tokenPublico?: string | null; aprobadaPublicamente?: boolean; fechaAprobacionPublica?: string | null }
 
-type AprobacionConfig = { id: string; empresaId: string; desde: number; hasta: number; cargoAprobador: string }
 
-type OCItem = { id: string; item: number; descripcion: string; unidadMedida: string; cantidad: number; valorUnitario: number; valorTotal: number }
+
+type OCItem = { id: string; item: number; descripcion: string; unidadMedida: string; cantidad: number; valorUnitario: number; valorTotal: number; tipoIva?: string }
 type OrdenCompra = { id: string; numero: number; fecha: string; proveedor: Proveedor; requisicion: { id: string; numero: number }; valorTotal: number; estado: string; items: OCItem[]; _count?: { recepciones: number; cuentasPagar: number } }
 
-type Recepcion = { id: string; ordenCompraId: string; ordenCompra: { id: string; numero: number; proveedor: Proveedor }; fechaRecepcion: string; remision: string | null; estado: string; observaciones: string | null; items: { id: string; item: number; descripcion: string; cantidadRecibida: number }[] }
-
 const PRIORIDAD_STYLES: Record<string, "default" | "warning" | "destructive"> = { NORMAL: "default", URGENTE: "warning", EMERGENCIA: "destructive" }
-const ESTADO_REQ_STYLES: Record<string, string> = { BORRADOR: "secondary", PENDIENTE_APROBACION: "warning", APROBADA: "success", RECHAZADA: "destructive", EN_COTIZACION: "default", ORDEN_COMPRA_GENERADA: "info", CERRADA: "default" }
+const ESTADO_REQ_STYLES: Record<string, string> = { BORRADOR: "secondary", EN_COTIZACION: "default", ORDEN_COMPRA_GENERADA: "info", CERRADA: "default" }
 const ESTADO_OC_STYLES: Record<string, "secondary" | "success" | "warning" | "info"> = { EMITIDA: "info", RECIBIDA: "success", FACTURADA: "warning", CERRADA: "secondary" }
-const ESTADO_RECEPCION_STYLES: Record<string, "warning" | "success" | "default"> = { PENDIENTE: "warning", PARCIAL: "default", COMPLETA: "success" }
 const PRIORIDAD_LABELS: Record<string, string> = { NORMAL: "Normal", URGENTE: "Urgente", EMERGENCIA: "Emergencia" }
-const ESTADO_REQ_LABELS: Record<string, string> = { BORRADOR: "Borrador", PENDIENTE_APROBACION: "Pendiente", APROBADA: "Aprobada", RECHAZADA: "Rechazada", EN_COTIZACION: "En Cotización", ORDEN_COMPRA_GENERADA: "OC Generada", CERRADA: "Cerrada" }
+const ESTADO_REQ_LABELS: Record<string, string> = { BORRADOR: "Borrador", EN_COTIZACION: "En Cotización", ORDEN_COMPRA_GENERADA: "OC Generada", CERRADA: "Cerrada" }
 const FORMAS_DE_PAGO = ["Contado", "Contra entrega", "Anticipo", "Pago parcial", "Crédito 15 días", "Crédito 30 días", "Crédito 45 días", "Crédito 60 días", "Crédito 90 días", "Crédito 120 días", "Pago por cuotas", "Pago programado", "Pago recurrente", "Consignación", "Otra (especificar)"]
-
-function formatPeso(n: number): string {
-  return n.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-function parsePeso(s: string): number {
-  if (!s) return 0
-  const cleaned = s.replace(/\./g, "").replace(",", ".")
-  return isNaN(parseFloat(cleaned)) ? 0 : parseFloat(cleaned)
-}
 
 function defaultReqItem(): { item: number; descripcion: string; centroCostosId: string | null; unidadMedida: string; cantidadSolicitada: number } {
   return { item: 0, descripcion: "", centroCostosId: null, unidadMedida: "", cantidadSolicitada: 0 }
 }
-function defaultCotItem() { return { item: 0, descripcion: "", unidadMedida: "", cantidad: 0, valorUnitario: 0, valorTotal: 0 } }
-function defaultOCItem() { return { item: 0, descripcion: "", unidadMedida: "", cantidad: 0, valorUnitario: 0, valorTotal: 0 } }
-function defaultRecItem() { return { item: 0, descripcion: "", cantidadRecibida: 0, observaciones: "" } }
+function defaultCotItem() { return { item: 0, descripcion: "", unidadMedida: "", cantidad: 0, valorUnitario: 0, valorTotal: 0, valorProveedor1: null, valorProveedor2: null, valorProveedor3: null } }
+function defaultPanelItem(): CotPanelItem { return { item: 0, descripcion: "", unidadMedida: "", cantidad: 0, valorUnitario: 0, valorTotal: 0 } }
+
+function defaultOCItem() { return { item: 0, descripcion: "", unidadMedida: "", cantidad: 0, valorUnitario: 0, valorTotal: 0, tipoIva: "EXENTO" } }
 
 export default function ComprasPage() {
   const { toast } = useToast()
+  const router = useRouter()
   const [tab, setTab] = useState("requisiciones")
 
   // ─── Shared data ───────────────────────────────────
@@ -93,31 +97,19 @@ export default function ComprasPage() {
   const [cotLoading, setCotLoading] = useState(true)
   const [cotDialogOpen, setCotDialogOpen] = useState(false)
   const [cotEditId, setCotEditId] = useState<string | null>(null)
-  const [cotForm, setCotForm] = useState({ requisicionId: "", proveedorId: "", tiempoEntrega: "", formaPago: "", observaciones: "", items: [defaultCotItem()] })
+  const [cotRequisicionId, setCotRequisicionId] = useState("")
+  const [cotNumero, setCotNumero] = useState(0)
+  const [cotPanels, setCotPanels] = useState<CotPanel[]>([])
+  const [cotPanelOpen, setCotPanelOpen] = useState<number | null>(null)
   const [cotSaving, setCotSaving] = useState(false)
   const [cotFilterReq, setCotFilterReq] = useState("")
-  const [cotVuFocus, setCotVuFocus] = useState<number | null>(null)
-  const [cotVuRaw, setCotVuRaw] = useState<Record<number, string>>({})
   const [cotDetailId, setCotDetailId] = useState<string | null>(null)
-  const [cotArchivos, setCotArchivos] = useState<{ key: string; nombre: string; base64?: string; url?: string }[]>([])
-  const [cotDragOver, setCotDragOver] = useState(false)
-  const [cotConfirmOpen, setCotConfirmOpen] = useState(false)
-  const cotFileInputRef = useRef<HTMLInputElement>(null)
-
-  // ─── Aprobaciones ──────────────────────────────────
-  const [aprobPendientes, setAprobPendientes] = useState<Requisicion[]>([])
-  const [aprobLoading, setAprobLoading] = useState(true)
-  const [aprobConfigs, setAprobConfigs] = useState<AprobacionConfig[]>([])
-  const [aprobConfigDialogOpen, setAprobConfigDialogOpen] = useState(false)
-  const [aprobConfigForm, setAprobConfigForm] = useState({ desde: "", hasta: "", cargoAprobador: "" })
-  const [aprobConfigSaving, setAprobConfigSaving] = useState(false)
-  const [aprobComentario, setAprobComentario] = useState("")
-  const [aprobModalOpen, setAprobModalOpen] = useState(false)
-  const [aprobModalReqId, setAprobModalReqId] = useState<string | null>(null)
-  const [aprobModalComentario, setAprobModalComentario] = useState("")
-  const [rechazarModalOpen, setRechazarModalOpen] = useState(false)
-  const [rechazarModalReqId, setRechazarModalReqId] = useState<string | null>(null)
-  const [rechazarModalMotivo, setRechazarModalMotivo] = useState("")
+  const [cotLinkData, setCotLinkData] = useState<Record<string, { token: string; url: string }>>({})
+  const [cotGenerandoLink, setCotGenerandoLink] = useState<string | null>(null)
+  const [cotSelectedIds, setCotSelectedIds] = useState<string[]>([])
+  const [comparativoLink, setComparativoLink] = useState<string | null>(null)
+  const [origin, setOrigin] = useState("")
+  useEffect(() => { setOrigin(window.location.origin) }, [])
 
   // ─── Ordenes de Compra ─────────────────────────────
   const [ordenes, setOrdenes] = useState<OrdenCompra[]>([])
@@ -127,19 +119,8 @@ export default function ComprasPage() {
   const [ocForm, setOcForm] = useState({ requisicionId: "", cotizacionId: "", proveedorId: "", condicionesComerciales: "", fechaEntrega: "", sitioEntrega: "", centroCostosId: "", formaPago: "", correoFacturacion: "", observaciones: "", aplicaIVA: true, items: [defaultOCItem()] })
   const [ocSaving, setOcSaving] = useState(false)
   const [ocDetailId, setOcDetailId] = useState<string | null>(null)
-
-  // ─── Recepción ─────────────────────────────────────
-  const [recepciones, setRecepciones] = useState<Recepcion[]>([])
-  const [recLoading, setRecLoading] = useState(true)
-  const [recDialogOpen, setRecDialogOpen] = useState(false)
-  const [recForm, setRecForm] = useState({ ordenCompraId: "", remision: "", observaciones: "", items: [defaultRecItem()] })
-  const [recSaving, setRecSaving] = useState(false)
-
-  // ─── Proveedores CRUD ──────────────────────────────
-  const [provDialogOpen, setProvDialogOpen] = useState(false)
-  const [provEditId, setProvEditId] = useState<string | null>(null)
-  const [provForm, setProvForm] = useState({ razonSocial: "", nit: "", contacto: "", telefono: "", email: "", direccion: "" })
-  const [provSaving, setProvSaving] = useState(false)
+  const [ocLinkData, setOcLinkData] = useState<Record<string, { token: string; url: string }>>({})
+  const [ocGenerandoLink, setOcGenerandoLink] = useState<string | null>(null)
 
   // ─── Centros Costos CRUD ───────────────────────────
   const [ccDialogOpen, setCcDialogOpen] = useState(false)
@@ -178,16 +159,6 @@ export default function ComprasPage() {
     } finally { setCotLoading(false) }
   }, [])
 
-  const loadAprobaciones = useCallback(async () => {
-    setAprobLoading(true)
-    try {
-      const { getAprobacionesPendientes, getAprobacionConfig } = await import("@/actions/compras")
-      const [pendientes, configs] = await Promise.all([getAprobacionesPendientes(), getAprobacionConfig()])
-      setAprobPendientes(pendientes as Requisicion[])
-      setAprobConfigs(configs as AprobacionConfig[])
-    } finally { setAprobLoading(false) }
-  }, [])
-
   const loadOrdenes = useCallback(async () => {
     setOcLoading(true)
     try {
@@ -197,54 +168,33 @@ export default function ComprasPage() {
     } finally { setOcLoading(false) }
   }, [])
 
-  const loadRecepciones = useCallback(async () => {
-    setRecLoading(true)
-    try {
-      const { getRecepciones } = await import("@/actions/compras")
-      const data = await getRecepciones()
-      setRecepciones(data as Recepcion[])
-    } finally { setRecLoading(false) }
-  }, [])
-
   const loadAll = useCallback(() => {
     loadCentrosCostos()
     loadProveedores()
     loadRequisiciones()
     loadCotizaciones()
-    loadAprobaciones()
     loadOrdenes()
-    loadRecepciones()
-  }, [loadCentrosCostos, loadProveedores, loadRequisiciones, loadCotizaciones, loadAprobaciones, loadOrdenes, loadRecepciones])
+  }, [loadCentrosCostos, loadProveedores, loadRequisiciones, loadCotizaciones, loadOrdenes])
 
   useEffect(() => { loadAll() }, [loadAll])
 
   // ─── Helpers ───────────────────────────────────────
   function getRequisicionesAprobadas() {
-    return requisiciones.filter(r => r.estado === "APROBADA")
+    return requisiciones.filter(r => r.estado === "EN_COTIZACION")
   }
 
   function getReqItemsForOC(requisicionId: string) {
     const req = requisiciones.find(r => r.id === requisicionId)
     if (!req) return [defaultOCItem()]
-    return req.items.map((i, idx) => ({
-      item: idx + 1,
-      descripcion: i.descripcion,
-      unidadMedida: i.unidadMedida,
-      cantidad: Number(i.cantidadSolicitada),
-      valorUnitario: 0,
-      valorTotal: 0,
-    }))
-  }
-
-  function getRecItemsForOC(ordenCompraId: string) {
-    const oc = ordenes.find(o => o.id === ordenCompraId)
-    if (!oc) return [defaultRecItem()]
-    return oc.items.map((i, idx) => ({
-      item: idx + 1,
-      descripcion: i.descripcion,
-      cantidadRecibida: 0,
-      observaciones: "",
-    }))
+  return req.items.map((i, idx) => ({
+    item: idx + 1,
+    descripcion: i.descripcion,
+    unidadMedida: i.unidadMedida,
+    cantidad: Number(i.cantidadSolicitada),
+    valorUnitario: 0,
+    valorTotal: 0,
+    tipoIva: "EXENTO",
+  }))
   }
 
   // ════════════════════════════════════════════════════════
@@ -252,9 +202,9 @@ export default function ComprasPage() {
   // ════════════════════════════════════════════════════════
   const filteredReqs = reqSearch
     ? requisiciones.filter(r =>
-        r.numero.toString().includes(reqSearch) ||
-        r.areaSolicitante.toLowerCase().includes(reqSearch.toLowerCase()) ||
-        r.requeridoPor.toLowerCase().includes(reqSearch.toLowerCase()))
+      r.numero.toString().includes(reqSearch) ||
+      r.areaSolicitante.toLowerCase().includes(reqSearch.toLowerCase()) ||
+      r.requeridoPor.toLowerCase().includes(reqSearch.toLowerCase()))
     : requisiciones
 
   function openReqCreate() {
@@ -358,7 +308,6 @@ export default function ComprasPage() {
       const { enviarRequisicion } = await import("@/actions/compras")
       await enviarRequisicion(id)
       loadRequisiciones()
-      loadAprobaciones()
       toast({ title: "Requisición enviada para aprobación", variant: "success" })
     } catch (err: any) { toast({ title: "Error al enviar", description: err?.message, variant: "destructive" }) }
   }
@@ -442,7 +391,7 @@ export default function ComprasPage() {
       if (file.name.match(/\.xlsx?$/i)) {
         handleReqExcel(file)
       }
-      nuevos.push({ key: crypto.randomUUID(), file })
+      nuevos.push({ key: uuid(), file })
     }
     setReqArchivos(prev => [...prev, ...nuevos])
   }
@@ -476,8 +425,10 @@ export default function ComprasPage() {
 
   function openCotCreate() {
     setCotEditId(null)
-    setCotForm({ requisicionId: "", proveedorId: "", tiempoEntrega: "", formaPago: "", observaciones: "", items: [defaultCotItem()] })
-    setCotArchivos([])
+    setCotRequisicionId("")
+    setCotNumero(0)
+    setCotPanels([])
+    setCotPanelOpen(null)
     setCotDialogOpen(true)
   }
 
@@ -486,8 +437,9 @@ export default function ComprasPage() {
       const { getCotizacion } = await import("@/actions/compras")
       const data = await getCotizacion(id) as any
       setCotEditId(id)
-      setCotForm({
-        requisicionId: data.requisicionId,
+      setCotRequisicionId(data.requisicionId)
+      setCotNumero(1)
+      setCotPanels([{
         proveedorId: data.proveedorId,
         tiempoEntrega: data.tiempoEntrega ?? "",
         formaPago: data.formaPago ?? "",
@@ -497,71 +449,145 @@ export default function ComprasPage() {
           descripcion: i.descripcion,
           unidadMedida: i.unidadMedida,
           cantidad: Number(i.cantidad),
-          valorUnitario: Number(i.valorUnitario),
           valorTotal: Number(i.valorTotal),
         })),
-      })
-      setCotArchivos((data.archivos || []).map((a: any) => ({ key: crypto.randomUUID(), nombre: a.nombre, url: a.url })))
+        archivos: (data.archivos || []).map((a: any) => ({ key: uuid(), nombre: a.nombre, url: a.url })),
+      }])
+      setCotPanelOpen(0)
       setCotDialogOpen(true)
     } catch {
       toast({ title: "Error al cargar cotización", variant: "destructive" })
     }
   }
 
-  function addCotItem() {
-    setCotForm(prev => ({ ...prev, items: [...prev.items, defaultCotItem()] }))
+  function initCotPanels(reqId: string, num: number) {
+    const req = requisiciones.find(r => r.id === reqId)
+    const baseItems = req ? req.items.map((i, idx) => ({
+      item: idx + 1,
+      descripcion: i.descripcion,
+      unidadMedida: i.unidadMedida,
+      cantidad: Number(i.cantidadSolicitada),
+      valorUnitario: 0,
+      valorTotal: 0,
+    })) : [defaultPanelItem()]
+    const panels: CotPanel[] = Array.from({ length: num }, () => ({
+      proveedorId: "",
+      tiempoEntrega: "",
+      formaPago: "",
+      observaciones: "",
+      items: baseItems.map(i => ({ ...i })),
+      archivos: [],
+    }))
+    setCotPanels(panels)
+    setCotPanelOpen(0)
   }
 
-  function removeCotItem(idx: number) {
-    setCotForm(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== idx) }))
+  function updatePanel(panelIdx: number, field: string, value: any) {
+    setCotPanels(prev => {
+      const copy = [...prev]
+      copy[panelIdx] = { ...copy[panelIdx], [field]: value }
+      return copy
+    })
   }
 
-  function updateCotItem(idx: number, field: string, value: any) {
-    setCotForm(prev => {
-      const items = [...prev.items]
-      items[idx] = { ...items[idx], [field]: value }
-      if (field === "cantidad" || field === "valorUnitario") {
-        items[idx].valorTotal = (Number(items[idx].cantidad) || 0) * (Number(items[idx].valorUnitario) || 0)
+  function updatePanelItemUnit(panelIdx: number, itemIdx: number, value: number) {
+    setCotPanels(prev => {
+      const copy = [...prev]
+      const items = [...copy[panelIdx].items]
+      const item = items[itemIdx]
+      items[itemIdx] = { ...item, valorUnitario: value, valorTotal: Number(item.cantidad) * value }
+      copy[panelIdx] = { ...copy[panelIdx], items }
+      return copy
+    })
+  }
+
+  function addPanelArchivos(panelIdx: number, files: FileList) {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      const key = uuid()
+      setCotPanels(prev => {
+        const copy = [...prev]
+        copy[panelIdx] = { ...copy[panelIdx], archivos: [...copy[panelIdx].archivos, { key, nombre: file.name }] }
+        return copy
+      })
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const base64 = (e.target?.result as string)?.split(",")[1] ?? ""
+        setCotPanels(prev => {
+          const copy = [...prev]
+          copy[panelIdx] = { ...copy[panelIdx], archivos: copy[panelIdx].archivos.map(a => a.key === key ? { ...a, base64 } : a) }
+          return copy
+        })
       }
-      return { ...prev, items }
+      reader.readAsDataURL(file)
+    }
+  }
+
+  function removePanelArchivo(panelIdx: number, key: string) {
+    setCotPanels(prev => {
+      const copy = [...prev]
+      copy[panelIdx] = { ...copy[panelIdx], archivos: copy[panelIdx].archivos.filter(a => a.key !== key) }
+      return copy
     })
   }
 
   function handleCotSave(e: React.FormEvent) {
     e.preventDefault()
-    setCotConfirmOpen(true)
+    setCotSaving(true)
+    saveCotizaciones()
   }
 
-  async function confirmCotSave() {
-    setCotConfirmOpen(false)
-    setCotSaving(true)
+  async function saveCotizaciones() {
     try {
-      const payload = {
-        requisicionId: cotForm.requisicionId,
-        proveedorId: cotForm.proveedorId,
-        tiempoEntrega: cotForm.tiempoEntrega || null,
-        formaPago: cotForm.formaPago || null,
-        observaciones: cotForm.observaciones || null,
-        items: cotForm.items.map((i, idx) => ({
-          item: idx + 1,
-          descripcion: i.descripcion,
-          unidadMedida: i.unidadMedida,
-          cantidad: i.cantidad,
-          valorUnitario: i.valorUnitario,
-          valorTotal: i.cantidad * i.valorUnitario,
-        })),
-        archivos: cotArchivos.map(a => a.base64 ? { nombre: a.nombre, base64: a.base64 } : { nombre: a.nombre, url: a.url }),
-      } as any
+      const emptyProv = cotPanels.find(p => !p.proveedorId)
+      if (emptyProv) {
+        setCotSaving(false)
+        toast({ title: "Error", description: "Todos los paneles deben tener un proveedor seleccionado", variant: "destructive" })
+        return
+      }
       const actions = await import("@/actions/compras")
       if (cotEditId) {
+        const panel = cotPanels[0]
+        const payload = {
+          requisicionId: cotRequisicionId,
+          proveedorId: panel.proveedorId,
+          tiempoEntrega: panel.tiempoEntrega || null,
+          formaPago: panel.formaPago || null,
+          observaciones: panel.observaciones || null,
+          items: panel.items.map(i => ({
+            item: i.item,
+            descripcion: i.descripcion,
+            unidadMedida: i.unidadMedida,
+            cantidad: i.cantidad,
+            valorUnitario: i.valorUnitario,
+            valorTotal: i.valorTotal,
+          })),
+          archivos: panel.archivos.map(a => a.base64 ? { nombre: a.nombre, base64: a.base64 } : { nombre: a.nombre, url: a.url }),
+        } as any
         await actions.updateCotizacion(cotEditId, payload)
       } else {
-        await actions.createCotizacion(payload)
+        await actions.createMultipleCotizaciones({
+          requisicionId: cotRequisicionId,
+          cotizaciones: cotPanels.map(p => ({
+            proveedorId: p.proveedorId,
+            tiempoEntrega: p.tiempoEntrega || null,
+            formaPago: p.formaPago || null,
+            observaciones: p.observaciones || null,
+            items: p.items.map(i => ({
+              descripcion: i.descripcion,
+              unidadMedida: i.unidadMedida,
+              cantidad: i.cantidad,
+              valorUnitario: i.valorUnitario,
+              valorTotal: i.valorTotal,
+            })),
+            archivos: p.archivos.map(a => a.base64 ? { nombre: a.nombre, base64: a.base64 } : { nombre: a.nombre, url: a.url }),
+          })),
+        })
       }
       setCotDialogOpen(false)
       loadCotizaciones()
       loadRequisiciones()
-      toast({ title: cotEditId ? "Cotización actualizada" : "Cotización creada", variant: "success" })
+      toast({ title: cotEditId ? "Cotización actualizada" : `${cotPanels.length} cotización(es) creada(s)`, variant: "success" })
     } catch (err: any) {
       toast({ title: "Error al guardar cotización", description: err?.message, variant: "destructive" })
     } finally { setCotSaving(false) }
@@ -587,96 +613,88 @@ export default function ComprasPage() {
     } catch (err: any) { toast({ title: "Error al eliminar", description: err?.message, variant: "destructive" }) }
   }
 
-  // ─── Cotización Archivos ────────────────────────────
-  function addCotArchivos(files: FileList) {
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
-      const key = crypto.randomUUID()
-      setCotArchivos(prev => [...prev, { key, nombre: file.name }])
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        const base64 = (e.target?.result as string)?.split(",")[1] ?? ""
-        setCotArchivos(prev => prev.map(a => a.key === key ? { ...a, base64 } : a))
-      }
-      reader.readAsDataURL(file)
+  async function handleGenerarLink(id: string) {
+    setCotGenerandoLink(id)
+    try {
+      const { generarLinkPublicoCotizacion } = await import("@/actions/compras")
+      const res = await generarLinkPublicoCotizacion(id)
+      setCotLinkData((prev) => ({ ...prev, [id]: { ...res, url: `${origin}/publico/cotizacion/${res.token}` } }))
+      loadCotizaciones()
+      toast({ title: "Link público generado", variant: "success" })
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message, variant: "destructive" })
+    } finally {
+      setCotGenerandoLink(null)
     }
   }
 
-  function removeCotArchivo(key: string) {
-    setCotArchivos(prev => prev.filter(a => a.key !== key))
-  }
-
-  function formatCotSize(name: string) {
-    return name
-  }
-
-  // ════════════════════════════════════════════════════════
-  // APROBACIONES
-  // ════════════════════════════════════════════════════════
-  function handleAprobarReq(id: string) {
-    setAprobModalReqId(id)
-    setAprobModalComentario("")
-    setAprobModalOpen(true)
-  }
-
-  function handleRechazarReq(id: string) {
-    setRechazarModalReqId(id)
-    setRechazarModalMotivo("")
-    setRechazarModalOpen(true)
-  }
-
-  async function confirmAprobar() {
-    if (!aprobModalReqId) return
+  async function handleLimpiarLink(id: string) {
+    if (!confirm("¿Eliminar el link público?")) return
     try {
-      const { aprobarRequisicion } = await import("@/actions/compras")
-      await aprobarRequisicion(aprobModalReqId, aprobModalComentario || undefined)
-      setAprobModalOpen(false)
-      setAprobModalReqId(null)
-      loadAprobaciones()
-      loadRequisiciones()
-      toast({ title: "Requisición aprobada", variant: "success" })
-    } catch (err: any) { toast({ title: "Error al aprobar", description: err?.message, variant: "destructive" }) }
-  }
-
-  async function confirmRechazar() {
-    if (!rechazarModalReqId || !rechazarModalMotivo.trim()) return
-    try {
-      const { rechazarRequisicion } = await import("@/actions/compras")
-      await rechazarRequisicion(rechazarModalReqId, rechazarModalMotivo)
-      setRechazarModalOpen(false)
-      setRechazarModalReqId(null)
-      loadAprobaciones()
-      loadRequisiciones()
-      toast({ title: "Requisición rechazada", variant: "success" })
-    } catch (err: any) { toast({ title: "Error al rechazar", description: err?.message, variant: "destructive" }) }
-  }
-
-  async function handleAprobConfigSave(e: React.FormEvent) {
-    e.preventDefault()
-    setAprobConfigSaving(true)
-    try {
-      const { createAprobacionConfig } = await import("@/actions/compras")
-      await createAprobacionConfig({
-        desde: parseFloat(aprobConfigForm.desde),
-        hasta: parseFloat(aprobConfigForm.hasta),
-        cargoAprobador: aprobConfigForm.cargoAprobador,
-      })
-      setAprobConfigDialogOpen(false)
-      loadAprobaciones()
-      toast({ title: "Regla de aprobación creada", variant: "success" })
+      const { limpiarLinkPublicoCotizacion } = await import("@/actions/compras")
+      await limpiarLinkPublicoCotizacion(id)
+      setCotLinkData((prev) => { const copy = { ...prev }; delete copy[id]; return copy })
+      loadCotizaciones()
+      toast({ title: "Link público eliminado", variant: "success" })
     } catch (err: any) {
-      toast({ title: "Error al crear regla", description: err?.message, variant: "destructive" })
-    } finally { setAprobConfigSaving(false) }
+      toast({ title: "Error", description: err?.message, variant: "destructive" })
+    }
   }
 
-  async function handleAprobConfigDelete(id: string) {
-    if (!confirm("¿Eliminar regla de aprobación?")) return
+  async function handleOCGenerarLink(id: string) {
+    setOcGenerandoLink(id)
     try {
-      const { deleteAprobacionConfig } = await import("@/actions/compras")
-      await deleteAprobacionConfig(id)
-      loadAprobaciones()
-      toast({ title: "Regla de aprobación eliminada", variant: "success" })
-    } catch (err: any) { toast({ title: "Error al eliminar regla", description: err?.message, variant: "destructive" }) }
+      const { generarLinkPublicoOrdenCompra } = await import("@/actions/compras")
+      const res = await generarLinkPublicoOrdenCompra(id)
+      setOcLinkData((prev) => ({ ...prev, [id]: { ...res, url: `${origin}/publico/orden-compra/${res.token}` } }))
+      loadOrdenes()
+      toast({ title: "Link público generado", variant: "success" })
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message, variant: "destructive" })
+    } finally {
+      setOcGenerandoLink(null)
+    }
+  }
+
+  async function handleOCLimpiarLink(id: string) {
+    if (!confirm("¿Eliminar el link público?")) return
+    try {
+      const { limpiarLinkPublicoOrdenCompra } = await import("@/actions/compras")
+      await limpiarLinkPublicoOrdenCompra(id)
+      setOcLinkData((prev) => { const copy = { ...prev }; delete copy[id]; return copy })
+      loadOrdenes()
+      toast({ title: "Link público eliminado", variant: "success" })
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message, variant: "destructive" })
+    }
+  }
+
+  async function handleGenerarComparativo() {
+    if (cotSelectedIds.length < 2) return
+    const selected = cotizaciones.filter(c => cotSelectedIds.includes(c.id))
+    const reqIds = new Set(selected.map(c => c.requisicionId))
+    if (reqIds.size > 1) {
+      toast({ title: "Error", description: "Seleccione cotizaciones de la misma requisición", variant: "destructive" })
+      return
+    }
+
+    setCotGenerandoLink("comparativo")
+    try {
+      const { generarLinkComparativo } = await import("@/actions/compras")
+      const res = await generarLinkComparativo({ requisicionId: selected[0].requisicionId, cotizacionesIds: cotSelectedIds })
+      setComparativoLink(`${origin}/publico/comparativo/${res.token}`)
+      setCotSelectedIds([])
+      toast({ title: "Link comparativo generado", variant: "success" })
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message, variant: "destructive" })
+    } finally {
+      setCotGenerandoLink(null)
+    }
+  }
+
+  // ─── Cotización Utils ──────────────────────────────
+  function panelSum(panel: CotPanel): number {
+    return panel.items.reduce((s, i) => s + Number(i.valorTotal), 0)
   }
 
   // ════════════════════════════════════════════════════════
@@ -684,8 +702,8 @@ export default function ComprasPage() {
   // ════════════════════════════════════════════════════════
   const filteredOCs = ocSearch
     ? ordenes.filter(o =>
-        o.numero.toString().includes(ocSearch) ||
-        o.proveedor.razonSocial.toLowerCase().includes(ocSearch.toLowerCase()))
+      o.numero.toString().includes(ocSearch) ||
+      o.proveedor.razonSocial.toLowerCase().includes(ocSearch.toLowerCase()))
     : ordenes
 
   function openOCCreate() {
@@ -729,8 +747,9 @@ export default function ComprasPage() {
           descripcion: i.descripcion,
           unidadMedida: i.unidadMedida,
           cantidad: Number(i.cantidad),
-          valorUnitario: Number(i.valorUnitario),
+          valorUnitario: Number(i.valorProveedor1) || Number(i.valorUnitario) || (Number(i.cantidad) > 0 ? Number(i.valorTotal) / Number(i.cantidad) : 0),
           valorTotal: Number(i.valorTotal),
+          tipoIva: "EXENTO",
         })) : req.items.map((i, idx) => ({
           item: idx + 1,
           descripcion: i.descripcion,
@@ -738,6 +757,7 @@ export default function ComprasPage() {
           cantidad: Number(i.cantidadSolicitada),
           valorUnitario: 0,
           valorTotal: 0,
+          tipoIva: "EXENTO",
         })),
       }))
     }
@@ -759,14 +779,14 @@ export default function ComprasPage() {
         formaPago: ocForm.formaPago || null,
         correoFacturacion: ocForm.correoFacturacion || null,
         observaciones: ocForm.observaciones || null,
-        aplicaIVA: ocForm.aplicaIVA,
         items: ocForm.items.map((i, idx) => ({
           item: idx + 1,
           descripcion: i.descripcion,
           unidadMedida: i.unidadMedida,
           cantidad: i.cantidad,
           valorUnitario: i.valorUnitario,
-          valorTotal: i.cantidad * i.valorUnitario,
+          valorTotal: i.valorTotal,
+          tipoIva: i.tipoIva,
         })),
       } as any)
       setOcDialogOpen(false)
@@ -778,114 +798,40 @@ export default function ComprasPage() {
     } finally { setOcSaving(false) }
   }
 
-  // ════════════════════════════════════════════════════════
-  // RECEPCION
-  // ════════════════════════════════════════════════════════
-  function openRecCreate() {
-    setRecForm({ ordenCompraId: "", remision: "", observaciones: "", items: [defaultRecItem()] })
-    setRecDialogOpen(true)
-  }
-
-  function handleOCSelectForRec(ocId: string) {
-    const oc = ordenes.find(o => o.id === ocId)
-    if (oc) {
-      setRecForm(prev => ({
-        ...prev,
-        ordenCompraId: ocId,
-        items: oc.items.map((i, idx) => ({
-          item: idx + 1,
-          descripcion: i.descripcion,
-          cantidadRecibida: 0,
-          observaciones: "",
-        })),
-      }))
+  async function handleEnviarATesoreria(ocId: string) {
+    try {
+      const { crearCuentaPagar, enviarATesoreria } = await import("@/actions/compras")
+      const cp = await crearCuentaPagar(ocId)
+      await enviarATesoreria((cp as any).id)
+      loadOrdenes()
+      toast({ title: "Cuenta por Pagar enviada a Tesorería", description: "Redirigiendo...", variant: "success" })
+      setTimeout(() => router.push("/tesoreria"), 800)
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message, variant: "destructive" })
     }
   }
 
-  function updateRecItem(idx: number, field: string, value: any) {
-    setRecForm(prev => {
-      const items = [...prev.items]
-      items[idx] = { ...items[idx], [field]: value }
-      return { ...prev, items }
-    })
-  }
-
-  async function handleRecSave(e: React.FormEvent) {
-    e.preventDefault()
-    setRecSaving(true)
+  async function handleRevertirOC(id: string) {
+    if (!confirm("¿Está seguro de revertir esta OC a EMITIDA? Se eliminarán las cuentas por pagar asociadas.")) return
     try {
-      const { createRecepcion } = await import("@/actions/compras")
-      await createRecepcion({
-        ordenCompraId: recForm.ordenCompraId,
-        remision: recForm.remision || null,
-        observaciones: recForm.observaciones || null,
-        items: recForm.items.map((i, idx) => ({
-          item: idx + 1,
-          descripcion: i.descripcion,
-          cantidadRecibida: i.cantidadRecibida,
-          observaciones: i.observaciones,
-        })),
-      } as any)
-      setRecDialogOpen(false)
-      loadRecepciones()
+      const { revertirOCFacturada } = await import("@/actions/compras")
+      await revertirOCFacturada(id)
       loadOrdenes()
-      toast({ title: "Recepción registrada", variant: "success" })
+      toast({ title: "OC revertida a EMITIDA", variant: "success" })
     } catch (err: any) {
-      toast({ title: "Error al registrar recepción", description: err?.message, variant: "destructive" })
-    } finally { setRecSaving(false) }
+      toast({ title: "Error", description: err?.message, variant: "destructive" })
+    }
   }
 
-  async function handleRecDelete(id: string) {
-    if (!confirm("¿Eliminar esta recepción?")) return
+  async function handleDuplicarOC(id: string) {
     try {
-      const { deleteRecepcion } = await import("@/actions/compras")
-      await deleteRecepcion(id)
-      loadRecepciones()
-      toast({ title: "Recepción eliminada", variant: "success" })
-    } catch (err: any) { toast({ title: "Error al eliminar recepción", description: err?.message, variant: "destructive" }) }
-  }
-
-  // ════════════════════════════════════════════════════════
-  // PROVEEDORES CRUD
-  // ════════════════════════════════════════════════════════
-  function openProvCreate() {
-    setProvEditId(null)
-    setProvForm({ razonSocial: "", nit: "", contacto: "", telefono: "", email: "", direccion: "" })
-    setProvDialogOpen(true)
-  }
-
-  function openProvEdit(prov: Proveedor) {
-    setProvEditId(prov.id)
-    setProvForm({ razonSocial: prov.razonSocial, nit: prov.nit, contacto: prov.contacto ?? "", telefono: prov.telefono ?? "", email: prov.email ?? "", direccion: prov.direccion ?? "" })
-    setProvDialogOpen(true)
-  }
-
-  async function handleProvSave(e: React.FormEvent) {
-    e.preventDefault()
-    setProvSaving(true)
-    try {
-      const { createProveedor, updateProveedor } = await import("@/actions/compras")
-      if (provEditId) {
-        await updateProveedor(provEditId, provForm as any)
-      } else {
-        await createProveedor(provForm as any)
-      }
-      setProvDialogOpen(false)
-      loadProveedores()
-      toast({ title: provEditId ? "Proveedor actualizado" : "Proveedor creado", variant: "success" })
+      const { duplicarOrdenCompra } = await import("@/actions/compras")
+      const nueva = await duplicarOrdenCompra(id)
+      loadOrdenes()
+      toast({ title: `OC #${nueva.numero} creada`, description: "Orden de compra duplicada exitosamente", variant: "success" })
     } catch (err: any) {
-      toast({ title: "Error al guardar proveedor", description: err?.message, variant: "destructive" })
-    } finally { setProvSaving(false) }
-  }
-
-  async function handleProvDelete(id: string) {
-    if (!confirm("¿Desactivar este proveedor?")) return
-    try {
-      const { deleteProveedor } = await import("@/actions/compras")
-      await deleteProveedor(id)
-      loadProveedores()
-      toast({ title: "Proveedor desactivado", variant: "success" })
-    } catch (err: any) { toast({ title: "Error al desactivar proveedor", description: err?.message, variant: "destructive" }) }
+      toast({ title: "Error al duplicar OC", description: err?.message, variant: "destructive" })
+    }
   }
 
   // ════════════════════════════════════════════════════════
@@ -941,49 +887,50 @@ export default function ComprasPage() {
     { key: "requeridoPor", header: "Solicitante" },
     { key: "prioridad", header: "Prioridad", render: (r) => <Badge variant={PRIORIDAD_STYLES[r.prioridad] ?? "default"}>{PRIORIDAD_LABELS[r.prioridad]}</Badge>, className: "w-24" },
     { key: "estado", header: "Estado", render: (r) => <Badge variant={(ESTADO_REQ_STYLES as any)[r.estado] ?? "secondary"}>{ESTADO_REQ_LABELS[r.estado] ?? r.estado}</Badge>, className: "w-32" },
-    { key: "acciones", header: "", render: (r) => (
-      <div className="flex gap-1">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setReqDetailId(reqDetailId === r.id ? null : r.id)} title="Ver detalles"><Eye className="h-4 w-4" /></Button>
-        {r.estado === "BORRADOR" && (
-          <>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleReqEnviar(r.id)} title="Enviar"><Send className="h-4 w-4 text-blue-600" /></Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openReqEdit(r.id)} title="Editar"><Pencil className="h-4 w-4" /></Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleReqDelete(r.id)} title="Eliminar"><Trash2 className="h-4 w-4" /></Button>
-          </>
-        )}
-      </div>
-    ), className: "w-40" },
+    {
+      key: "acciones", header: "", render: (r) => (
+        <div className="flex gap-1">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setReqDetailId(reqDetailId === r.id ? null : r.id)} title="Ver detalles"><Eye className="h-4 w-4" /></Button>
+          {r.estado === "BORRADOR" && (
+            <>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleReqEnviar(r.id)} title="Enviar"><Send className="h-4 w-4 text-blue-600" /></Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openReqEdit(r.id)} title="Editar"><Pencil className="h-4 w-4" /></Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleReqDelete(r.id)} title="Eliminar"><Trash2 className="h-4 w-4" /></Button>
+            </>
+          )}
+        </div>
+      ), className: "w-40"
+    },
   ]
 
   const cotColumns: Column<Cotizacion>[] = [
+    {
+      key: "select", header: "", render: (c) => (
+        <input type="checkbox" className="h-4 w-4 cursor-pointer"
+          checked={cotSelectedIds.includes(c.id)}
+          onChange={(e) => {
+            if (e.target.checked) setCotSelectedIds(p => [...p, c.id])
+            else setCotSelectedIds(p => p.filter(id => id !== c.id))
+          }}
+        />
+      ), className: "w-10 text-center"
+    },
     { key: "numero", header: "No.", render: (c) => <span className="font-mono">{c.numero}</span>, className: "w-16" },
     { key: "fecha", header: "Fecha", render: (c) => formatDate(c.fecha), className: "w-24" },
+    { key: "requisicion", header: "Requisición", render: (c) => c.requisicion ? <span className="font-mono text-primary">#{c.requisicion.numero}</span> : "—", className: "w-24" },
     { key: "proveedor", header: "Proveedor", render: (c) => c.proveedor?.razonSocial },
     { key: "valorTotal", header: "Valor Total", render: (c) => formatMoney(c.valorTotal), className: "w-28 text-right" },
     { key: "ganadora", header: "Ganadora", render: (c) => c.ganadora ? <Badge variant="success">Sí</Badge> : <Badge variant="secondary">No</Badge>, className: "w-20" },
-    { key: "acciones", header: "", render: (c) => (
-      <div className="flex gap-1">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setCotDetailId(c.id)} title="Ver detalle"><Eye className="h-4 w-4" /></Button>
-        {!c.ganadora && <Button variant="ghost" size="icon" className="h-7 w-7 text-green-600" onClick={() => handleSeleccionarCot(c.id)} title="Seleccionar"><CheckCircle className="h-4 w-4" /></Button>}
-        {!c.ganadora && <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openCotEdit(c.id)} title="Editar"><Pencil className="h-4 w-4" /></Button>}
-        {!c.ganadora && <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleCotDelete(c.id)} title="Eliminar"><Trash2 className="h-4 w-4" /></Button>}
-      </div>
-    ), className: "w-40" },
-  ]
-
-  const aprobColumns: Column<Requisicion>[] = [
-    { key: "numero", header: "No.", render: (r) => <span className="font-mono">{r.numero}</span>, className: "w-16" },
-    { key: "fecha", header: "Fecha", render: (r) => formatDate(r.fecha), className: "w-24" },
-    { key: "areaSolicitante", header: "Centro de Costo" },
-    { key: "requeridoPor", header: "Solicitante" },
-    { key: "prioridad", header: "Prioridad", render: (r) => <Badge variant={PRIORIDAD_STYLES[r.prioridad] ?? "default"}>{PRIORIDAD_LABELS[r.prioridad]}</Badge>, className: "w-24" },
-    { key: "items", header: "Items", render: (r) => r.items.length, className: "w-16 text-center" },
-    { key: "acciones", header: "", render: (r) => (
-      <div className="flex gap-2">
-        <Button size="sm" className="h-7 text-xs" onClick={() => handleAprobarReq(r.id)}><CheckCircle className="mr-1 h-3.5 w-3.5" />Aprobar</Button>
-        <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => handleRechazarReq(r.id)}><XCircle className="mr-1 h-3.5 w-3.5" />Rechazar</Button>
-      </div>
-    ), className: "w-44" },
+    {
+      key: "acciones", header: "", render: (c) => (
+        <div className="flex gap-1">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setCotDetailId(c.id)} title="Ver detalle"><Eye className="h-4 w-4" /></Button>
+          {!c.ganadora && <Button variant="ghost" size="icon" className="h-7 w-7 text-green-600" onClick={() => handleSeleccionarCot(c.id)} title="Seleccionar"><CheckCircle className="h-4 w-4" /></Button>}
+          {!c.ganadora && <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openCotEdit(c.id)} title="Editar"><Pencil className="h-4 w-4" /></Button>}
+          {!c.ganadora && <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleCotDelete(c.id)} title="Eliminar"><Trash2 className="h-4 w-4" /></Button>}
+        </div>
+      ), className: "w-40"
+    },
   ]
 
   const ocColumns: Column<OrdenCompra>[] = [
@@ -992,46 +939,40 @@ export default function ComprasPage() {
     { key: "proveedor", header: "Proveedor", render: (o) => o.proveedor?.razonSocial },
     { key: "valorTotal", header: "Valor Total", render: (o) => formatMoney(o.valorTotal), className: "w-28 text-right" },
     { key: "estado", header: "Estado", render: (o) => <Badge variant={(ESTADO_OC_STYLES as any)[o.estado] ?? "default"}>{o.estado}</Badge>, className: "w-24" },
-    { key: "acciones", header: "", render: (o) => (
-      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOcDetailId(ocDetailId === o.id ? null : o.id)} title="Ver"><Eye className="h-4 w-4" /></Button>
-    ), className: "w-16" },
-  ]
-
-  const recColumns: Column<Recepcion>[] = [
-    { key: "fecha", header: "Fecha", render: (r) => formatDate(r.fechaRecepcion), className: "w-24" },
-    { key: "oc", header: "OC", render: (r) => <span className="font-mono">#{r.ordenCompra?.numero}</span>, className: "w-16" },
-    { key: "proveedor", header: "Proveedor", render: (r) => r.ordenCompra?.proveedor?.razonSocial },
-    { key: "remision", header: "Remisión", render: (r) => r.remision ?? "—" },
-    { key: "estado", header: "Estado", render: (r) => <Badge variant={(ESTADO_RECEPCION_STYLES as any)[r.estado] ?? "default"}>{r.estado}</Badge>, className: "w-24" },
-    { key: "acciones", header: "", render: (r) => (
-      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleRecDelete(r.id)}><Trash2 className="h-4 w-4" /></Button>
-    ), className: "w-16" },
-  ]
-
-  const provColumns: Column<Proveedor>[] = [
-    { key: "razonSocial", header: "Razón Social" },
-    { key: "nit", header: "NIT" },
-    { key: "contacto", header: "Contacto" },
-    { key: "telefono", header: "Teléfono" },
-    { key: "email", header: "Email" },
-    { key: "acciones", header: "", render: (p) => (
-      <div className="flex gap-1">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openProvEdit(p)}><Pencil className="h-4 w-4" /></Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleProvDelete(p.id)}><Trash2 className="h-4 w-4" /></Button>
-      </div>
-    ), className: "w-20" },
+    {
+      key: "acciones", header: "", render: (o) => (
+        <div className="flex gap-1">
+          {o.estado === "EMITIDA" && (
+            <Button variant="ghost" size="sm" className="text-blue-600 h-7" onClick={() => handleEnviarATesoreria(o.id)} title="Enviar a Tesorería">
+              <DollarSign className="h-4 w-4 mr-1" />Tesorería
+            </Button>
+          )}
+          {o.estado === "FACTURADA" && (
+            <Button variant="ghost" size="sm" className="text-amber-600 h-7" onClick={() => handleRevertirOC(o.id)} title="Retroceder a EMITIDA">
+              <Undo2 className="h-4 w-4 mr-1" />Retroceder
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" className="text-green-600 h-7" onClick={() => handleDuplicarOC(o.id)} title="Duplicar OC">
+            <Copy className="h-4 w-4 mr-1" />Duplicar
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOcDetailId(ocDetailId === o.id ? null : o.id)} title="Ver"><Eye className="h-4 w-4" /></Button>
+        </div>
+      ), className: "w-32"
+    },
   ]
 
   const ccColumns: Column<CentroCostos>[] = [
     { key: "codigo", header: "Código", render: (c) => <span className="font-mono">{c.codigo}</span> },
     { key: "nombre", header: "Nombre" },
     { key: "descripcion", header: "Descripción" },
-    { key: "acciones", header: "", render: (c) => (
-      <div className="flex gap-1">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openCCEdit(c)}><Pencil className="h-4 w-4" /></Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleCCDelete(c.id)}><Trash2 className="h-4 w-4" /></Button>
-      </div>
-    ), className: "w-20" },
+    {
+      key: "acciones", header: "", render: (c) => (
+        <div className="flex gap-1">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openCCEdit(c)}><Pencil className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleCCDelete(c.id)}><Trash2 className="h-4 w-4" /></Button>
+        </div>
+      ), className: "w-20"
+    },
   ]
 
   // ════════════════════════════════════════════════════════
@@ -1046,12 +987,8 @@ export default function ComprasPage() {
           {[
             { value: "requisiciones", label: "Requisiciones", icon: ShoppingCart },
             { value: "cotizaciones", label: "Cotizaciones", icon: DollarSign },
-            { value: "aprobaciones", label: "Aprobaciones", icon: CheckCircle },
             { value: "ordenes", label: "Órdenes de Compra", icon: FileText },
-            { value: "recepcion", label: "Recepción", icon: Package },
-            { value: "proveedores", label: "Proveedores", icon: Users },
             { value: "centros-costos", label: "Centros Costo", icon: Building2 },
-            { value: "config", label: "Config Aprob.", icon: Settings },
           ].map(t => (
             <Tabs.Trigger key={t.value} value={t.value}
               className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:text-primary"
@@ -1064,11 +1001,11 @@ export default function ComprasPage() {
 
         {/* ═══ REQUISICIONES ═══ */}
         <Tabs.Content value="requisiciones" className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Input placeholder="Buscar por número, centro de costo o solicitante..." value={reqSearch} onChange={(e) => setReqSearch(e.target.value)} className="max-w-sm" />
-            <Button onClick={openReqCreate}><Plus className="mr-2 h-4 w-4" />Nueva Requisición</Button>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+            <Input placeholder="Buscar por número, centro de costo o solicitante..." value={reqSearch} onChange={(e) => setReqSearch(e.target.value)} className="w-full sm:max-w-sm" />
+            <Button onClick={openReqCreate} className="w-full sm:w-auto"><Plus className="mr-2 h-4 w-4" />Nueva Requisición</Button>
           </div>
-          <DataTable columns={reqColumns} data={filteredReqs} loading={reqLoading} />
+          <DataTable columns={reqColumns} data={filteredReqs} loading={reqLoading} mobileCardTitle={(r) => <><span className="font-mono">#{r.numero}</span> — {r.areaSolicitante}</>} />
 
           {/* Detalle Requisición */}
           <Dialog open={reqDetailId !== null} onOpenChange={(o) => !o && setReqDetailId(null)}>
@@ -1149,9 +1086,8 @@ export default function ComprasPage() {
 
               {/* ─── Carga Excel ─────────────────────────────── */}
               <div
-                className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer ${
-                  reqDragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-muted-foreground/50"
-                }`}
+                className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer ${reqDragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-muted-foreground/50"
+                  }`}
                 onDragOver={(e) => { e.preventDefault(); setReqDragOver(true) }}
                 onDragLeave={() => setReqDragOver(false)}
                 onDrop={onReqDrop}
@@ -1232,171 +1168,266 @@ export default function ComprasPage() {
 
         {/* ═══ COTIZACIONES ═══ */}
         <Tabs.Content value="cotizaciones" className="space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 w-full sm:w-auto">
               <Select value={cotFilterReq} onValueChange={setCotFilterReq}>
-                <SelectTrigger className="w-72"><SelectValue placeholder="Filtrar por requisición..." /></SelectTrigger>
+                <SelectTrigger className="w-full sm:w-72"><SelectValue placeholder="Filtrar por requisición..." /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value=" ">Todas</SelectItem>
                   {reqsAprobadas.map(r => <SelectItem key={r.id} value={r.id}>Req #{r.numero} - {r.areaSolicitante}</SelectItem>)}
                 </SelectContent>
               </Select>
+              {cotSelectedIds.length >= 2 && (
+                <Button variant="secondary" onClick={handleGenerarComparativo} disabled={cotGenerandoLink === "comparativo"} className="w-full sm:w-auto whitespace-nowrap">
+                  {cotGenerandoLink === "comparativo" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LinkIcon className="mr-2 h-4 w-4" />}
+                  Generar Comparativo
+                </Button>
+              )}
             </div>
-            <Button onClick={openCotCreate}><Plus className="mr-2 h-4 w-4" />Nueva Cotización</Button>
+            <Button onClick={openCotCreate} className="w-full sm:w-auto"><Plus className="mr-2 h-4 w-4" />Nueva Cotización</Button>
           </div>
-          <DataTable columns={cotColumns} data={filteredCots} loading={cotLoading} />
+          <DataTable columns={cotColumns} data={filteredCots} loading={cotLoading} mobileCardTitle={(c) => <><span className="font-mono">#{c.numero}</span> — {c.proveedor?.razonSocial}</>} />
+
+          <Dialog open={!!comparativoLink} onOpenChange={(o) => !o && setComparativoLink(null)}>
+            <DialogContent>
+              <DialogHeader><DialogTitle>Link Comparativo Generado</DialogTitle></DialogHeader>
+              <div className="space-y-4 py-4">
+                <p className="text-sm text-muted-foreground">Comparte este link para que el aprobador pueda visualizar y elegir la cotización ganadora:</p>
+                <div className="flex items-center gap-2">
+                  <Input value={comparativoLink || ""} readOnly />
+                  <Button variant="outline" size="icon" onClick={() => {
+                    if (navigator.clipboard) navigator.clipboard.writeText(comparativoLink || "")
+                    toast({ title: "Copiado al portapapeles" })
+                  }}>
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
 
           <FormDialog open={cotDialogOpen} onOpenChange={setCotDialogOpen} title={cotEditId ? "Editar Cotización" : "Nueva Cotización"} description="Registra cotización de proveedor" loading={cotSaving} onSubmit={handleCotSave as any} className="sm:max-w-[800px]">
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Requisición</Label>
-                  <Select value={cotForm.requisicionId} onValueChange={(v) => {
-                    const req = requisiciones.find(r => r.id === v)
-                    setCotForm(p => ({
-                      ...p,
-                      requisicionId: v,
-                      items: req ? req.items.map((i, idx) => ({
-                        item: idx + 1,
-                        descripcion: i.descripcion,
-                        unidadMedida: i.unidadMedida,
-                        cantidad: Number(i.cantidadSolicitada),
-                        valorUnitario: 0,
-                        valorTotal: 0,
-                      })) : [defaultCotItem()],
-                    }))
-                  }}>
-                    <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
-                    <SelectContent>
-                      {(() => {
-                        const allReqs = [...reqsAprobadas]
-                        if (cotForm.requisicionId && !allReqs.some(r => r.id === cotForm.requisicionId)) {
-                          const req = requisiciones.find(r => r.id === cotForm.requisicionId)
-                          if (req) allReqs.unshift(req)
-                        }
-                        return allReqs.map(r => <SelectItem key={r.id} value={r.id}>Req #{r.numero} - {r.areaSolicitante}</SelectItem>)
-                      })()}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Proveedor</Label>
-                  <Select value={cotForm.proveedorId} onValueChange={(v) => setCotForm(p => ({ ...p, proveedorId: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
-                    <SelectContent>
-                      {proveedores.map(p => <SelectItem key={p.id} value={p.id}>{p.razonSocial}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Tiempo de Entrega</Label>
-                  <Input value={cotForm.tiempoEntrega} onChange={(e) => setCotForm(p => ({ ...p, tiempoEntrega: e.target.value }))} placeholder="Ej: 15 días" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Forma de Pago</Label>
-                  <Select value={cotForm.formaPago && !FORMAS_DE_PAGO.includes(cotForm.formaPago) ? "Otra (especificar)" : cotForm.formaPago}
-                    onValueChange={(v) => setCotForm(p => ({ ...p, formaPago: v === "Otra (especificar)" ? "" : v }))}>
-                    <SelectTrigger><SelectValue placeholder="Seleccionar forma de pago" /></SelectTrigger>
-                    <SelectContent>
-                      {FORMAS_DE_PAGO.map(fp => <SelectItem key={fp} value={fp}>{fp}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  {cotForm.formaPago && !FORMAS_DE_PAGO.includes(cotForm.formaPago) && (
-                    <Input value={cotForm.formaPago} onChange={(e) => setCotForm(p => ({ ...p, formaPago: e.target.value }))} placeholder="Especifique la forma de pago" />
-                  )}
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label>Observaciones</Label>
-                <Input value={cotForm.observaciones} onChange={(e) => setCotForm(p => ({ ...p, observaciones: e.target.value }))} />
-              </div>
-
-              {/* ─── Carga Archivos Cotización ──────────────── */}
-              <div
-                className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors cursor-pointer ${
-                  cotDragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-muted-foreground/50"
-                }`}
-                onDragOver={(e) => { e.preventDefault(); setCotDragOver(true) }}
-                onDragLeave={() => setCotDragOver(false)}
-                onDrop={(e) => { e.preventDefault(); setCotDragOver(false); if (e.dataTransfer.files.length > 0) addCotArchivos(e.dataTransfer.files) }}
-                onClick={() => cotFileInputRef.current?.click()}
-              >
-                <p className="text-sm font-medium">Adjuntar archivos</p>
-                <p className="text-xs text-muted-foreground mt-1">PDF, imágenes, Excel...</p>
-                <input ref={cotFileInputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.doc,.docx" className="hidden"
-                  onChange={(e) => { if (e.target.files?.length) addCotArchivos(e.target.files); e.target.value = "" }} />
-              </div>
-
-              {cotArchivos.length > 0 && (
-                <div className="space-y-1">
-                  {cotArchivos.map(a => (
-                    <div key={a.key} className="flex items-center justify-between px-3 py-1.5 text-sm border rounded-md">
-                      {a.url ? (
-                        <a href={a.url} target="_blank" className="truncate underline hover:text-primary">{a.nombre}</a>
-                      ) : (
-                        <span className="truncate">{a.nombre}</span>
-                      )}
-                      <Button type="button" variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => removeCotArchivo(a.key)}>✕</Button>
+              {cotEditId ? (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Requisición</Label>
+                      <Input value={`Req #${requisiciones.find(r => r.id === cotRequisicionId)?.numero ?? ""}`} disabled />
                     </div>
-                  ))}
-                </div>
-              )}
-
-              <Separator />
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label>Items</Label>
-                  <Button type="button" variant="outline" size="sm" onClick={addCotItem}><Plus className="mr-1 h-3.5 w-3.5" />Agregar</Button>
-                </div>
-                <div className="overflow-x-auto rounded-md border">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/50">
-                        <th className="text-left px-3 py-2 font-medium">Descripción</th>
-                        <th className="text-left px-3 py-2 font-medium w-[90px]">Unidad</th>
-                        <th className="text-right px-3 py-2 font-medium w-[90px]">Cantidad</th>
-                        <th className="text-right px-3 py-2 font-medium w-[160px]">V. Unitario</th>
-                        <th className="text-right px-3 py-2 font-medium w-[160px]">V. Total</th>
-                        <th className="w-10" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cotForm.items.map((det, idx) => (
-                        <tr key={idx} className="border-b last:border-0">
-                          <td className="px-3 py-1.5">
-                            <Input value={det.descripcion} onChange={(e) => updateCotItem(idx, "descripcion", e.target.value)} placeholder="Descripción" required />
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <Input value={det.unidadMedida} onChange={(e) => updateCotItem(idx, "unidadMedida", e.target.value)} placeholder="Und" required />
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <Input type="number" step="0.01" min="0" value={det.cantidad} onChange={(e) => updateCotItem(idx, "cantidad", parseFloat(e.target.value) || 0)} required className="text-right" />
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <div className="relative">
-                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
-                              <Input type="text" inputMode="decimal" 
-                                value={cotVuFocus === idx ? (cotVuRaw[idx] ?? "") : formatPeso(det.valorUnitario)} 
-                                onFocus={() => { setCotVuFocus(idx); setCotVuRaw(p => ({ ...p, [idx]: det.valorUnitario ? formatPeso(det.valorUnitario) : "" })) }}
-                                onBlur={() => { setCotVuFocus(null); setCotVuRaw(p => { const r = { ...p }; delete r[idx]; return r }) }}
-                                onChange={(e) => { const raw = e.target.value; setCotVuRaw(p => ({ ...p, [idx]: raw })); const num = parsePeso(raw); updateCotItem(idx, "valorUnitario", num) }} 
-                                required className="text-right pl-6" placeholder="0,00" />
-                            </div>
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <div className="flex h-9 items-center justify-end text-sm font-mono">{formatMoney(det.cantidad * det.valorUnitario)}</div>
-                          </td>
-                          <td className="px-1 py-1.5">
-                            {cotForm.items.length > 1 && (
-                              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeCotItem(idx)}>✕</Button>
-                            )}
-                          </td>
+                    <div className="space-y-2">
+                      <Label>Proveedor</Label>
+                      <Select value={cotPanels[0]?.proveedorId ?? ""} onValueChange={(v) => updatePanel(0, "proveedorId", v)}>
+                        <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+                        <SelectContent>
+                          {proveedores.map(p => <SelectItem key={p.id} value={p.id}>{p.razonSocial}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Tiempo de Entrega</Label>
+                      <Input value={cotPanels[0]?.tiempoEntrega ?? ""} onChange={(e) => updatePanel(0, "tiempoEntrega", e.target.value)} placeholder="Ej: 15 días" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Forma de Pago</Label>
+                      <Select
+                        value={cotPanels[0]?.formaPago && !FORMAS_DE_PAGO.includes(cotPanels[0].formaPago) ? "Otra (especificar)" : (cotPanels[0]?.formaPago ?? "")}
+                        onValueChange={(v) => updatePanel(0, "formaPago", v === "Otra (especificar)" ? "" : v)}
+                      >
+                        <SelectTrigger><SelectValue placeholder="Seleccionar forma de pago" /></SelectTrigger>
+                        <SelectContent>
+                          {FORMAS_DE_PAGO.map(fp => <SelectItem key={fp} value={fp}>{fp}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      {cotPanels[0]?.formaPago && !FORMAS_DE_PAGO.includes(cotPanels[0].formaPago) && (
+                        <Input value={cotPanels[0].formaPago} onChange={(e) => updatePanel(0, "formaPago", e.target.value)} placeholder="Especifique la forma de pago" />
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Observaciones</Label>
+                    <Textarea value={cotPanels[0]?.observaciones ?? ""} onChange={(e) => updatePanel(0, "observaciones", e.target.value)} rows={2} />
+                  </div>
+                  <div className="overflow-x-auto rounded-md border">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          <th className="text-left px-2 py-2 font-medium text-xs">Descripción</th>
+                          <th className="text-left px-2 py-2 font-medium w-[70px] text-xs">Und</th>
+                          <th className="text-right px-2 py-2 font-medium w-[70px] text-xs">Cant</th>
+                          <th className="text-right px-2 py-2 font-medium w-[130px] text-xs">V. Unidad</th>
+                          <th className="text-right px-2 py-2 font-medium w-[130px] text-xs">V. Total</th>
                         </tr>
+                      </thead>
+                      <tbody>
+                        {cotPanels[0]?.items.map((det, idx) => (
+                          <tr key={idx} className="border-b last:border-0">
+                            <td className="px-2 py-1">{det.descripcion}</td>
+                            <td className="px-2 py-1">{det.unidadMedida}</td>
+                            <td className="px-2 py-1 text-right font-mono">{Number(det.cantidad)}</td>
+                            <td className="px-2 py-1">
+                              <MoneyInput value={det.valorUnitario} onChange={(v) => updatePanelItemUnit(0, idx, v)} />
+                            </td>
+                            <td className="px-2 py-1 text-right font-mono">{formatMoney(det.valorTotal)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-end text-sm font-medium">
+                    Total: {formatMoney(panelSum(cotPanels[0] ?? { items: [], proveedorId: "", tiempoEntrega: "", formaPago: "", observaciones: "", archivos: [] }))}
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Archivos adjuntos</Label>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => document.getElementById("cot-edit-file")?.click()}>
+                        + Adjuntar
+                      </Button>
+                      <input id="cot-edit-file" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.doc,.docx" className="hidden"
+                        onChange={(e) => { if (e.target.files?.length) { addPanelArchivos(0, e.target.files); e.target.value = "" } }} />
+                    </div>
+                    {cotPanels[0]?.archivos.length > 0 && (
+                      <div className="space-y-1 mt-2">
+                        {cotPanels[0].archivos.map(a => (
+                          <div key={a.key} className="flex items-center justify-between px-3 py-1.5 text-sm border rounded-md">
+                            {a.url ? <a href={a.url} target="_blank" className="truncate underline hover:text-primary">{a.nombre}</a> : <span className="truncate">{a.nombre}</span>}
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => removePanelArchivo(0, a.key)}>✕</Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Requisición</Label>
+                      <Select value={cotRequisicionId} onValueChange={(v) => {
+                        setCotRequisicionId(v)
+                        if (cotNumero > 0) initCotPanels(v, cotNumero)
+                      }}>
+                        <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+                        <SelectContent>
+                          {(() => {
+                            const allReqs = [...reqsAprobadas]
+                            if (cotRequisicionId && !allReqs.some(r => r.id === cotRequisicionId)) {
+                              const req = requisiciones.find(r => r.id === cotRequisicionId)
+                              if (req) allReqs.unshift(req)
+                            }
+                            return allReqs.map(r => <SelectItem key={r.id} value={r.id}>Req #{r.numero} - {r.areaSolicitante}</SelectItem>)
+                          })()}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>N° de Cotizaciones</Label>
+                      <Input type="number" min={1} max={20} value={cotNumero || ""} onChange={(e) => {
+                        const n = parseInt(e.target.value) || 0
+                        setCotNumero(n)
+                        if (cotRequisicionId && n > 0) initCotPanels(cotRequisicionId, n)
+                      }} placeholder="Ej: 3" />
+                    </div>
+                  </div>
+                  {cotPanels.length > 0 && (
+                    <div className="space-y-3">
+                      {cotPanels.map((panel, pIdx) => (
+                        <Card key={pIdx}>
+                          <CardHeader className="py-3 cursor-pointer select-none" onClick={() => setCotPanelOpen(cotPanelOpen === pIdx ? null : pIdx)}>
+                            <div className="flex items-center justify-between">
+                              <CardTitle className="text-sm font-medium">Cotización #{pIdx + 1}{panel.proveedorId ? ` — ${proveedores.find(p => p.id === panel.proveedorId)?.razonSocial ?? ""}` : ""}</CardTitle>
+                              <span className="text-xs text-muted-foreground">{cotPanelOpen === pIdx ? "▲" : "▼"}</span>
+                            </div>
+                          </CardHeader>
+                          {cotPanelOpen === pIdx && (
+                            <CardContent className="pt-0 space-y-3">
+                              <div className="space-y-2">
+                                <Label>Proveedor</Label>
+                                <Select value={panel.proveedorId} onValueChange={(v) => updatePanel(pIdx, "proveedorId", v)}>
+                                  <SelectTrigger><SelectValue placeholder="Seleccionar proveedor..." /></SelectTrigger>
+                                  <SelectContent>
+                                    {proveedores.filter(p => p.id === panel.proveedorId || !cotPanels.some((other, oIdx) => oIdx !== pIdx && other.proveedorId === p.id)).map(p => <SelectItem key={p.id} value={p.id}>{p.razonSocial}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="overflow-x-auto rounded-md border">
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="border-b bg-muted/50">
+                                      <th className="text-left px-2 py-2 font-medium text-xs">Descripción</th>
+                                      <th className="text-left px-2 py-2 font-medium w-[60px] text-xs">Und</th>
+                                      <th className="text-right px-2 py-2 font-medium w-[60px] text-xs">Cant</th>
+                                      <th className="text-right px-2 py-2 font-medium w-[130px] text-xs">V. Unidad</th>
+                                      <th className="text-right px-2 py-2 font-medium w-[130px] text-xs">V. Total</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {panel.items.map((det, iIdx) => (
+                                      <tr key={iIdx} className="border-b last:border-0">
+                                        <td className="px-2 py-1 text-sm">{det.descripcion}</td>
+                                        <td className="px-2 py-1 text-sm">{det.unidadMedida}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-sm">{Number(det.cantidad)}</td>
+                                        <td className="px-2 py-1">
+                                          <MoneyInput value={det.valorUnitario} onChange={(v) => updatePanelItemUnit(pIdx, iIdx, v)} />
+                                        </td>
+                                        <td className="px-2 py-1 text-right font-mono text-sm">{formatMoney(det.valorTotal)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <div className="flex justify-end text-sm font-medium">
+                                Total cotización: {formatMoney(panelSum(panel))}
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <Label className="text-xs">Tiempo de Entrega</Label>
+                                  <Input value={panel.tiempoEntrega} onChange={(e) => updatePanel(pIdx, "tiempoEntrega", e.target.value)} placeholder="Ej: 15 días" className="h-8 text-sm" />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs">Forma de Pago</Label>
+                                  <Select value={panel.formaPago && !FORMAS_DE_PAGO.includes(panel.formaPago) ? "Otra (especificar)" : panel.formaPago}
+                                    onValueChange={(v) => updatePanel(pIdx, "formaPago", v === "Otra (especificar)" ? "" : v)}>
+                                    <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+                                    <SelectContent>
+                                      {FORMAS_DE_PAGO.map(fp => <SelectItem key={fp} value={fp}>{fp}</SelectItem>)}
+                                    </SelectContent>
+                                  </Select>
+                                  {panel.formaPago && !FORMAS_DE_PAGO.includes(panel.formaPago) && (
+                                    <Input value={panel.formaPago} onChange={(e) => updatePanel(pIdx, "formaPago", e.target.value)} placeholder="Especifique" className="h-8 text-sm" />
+                                  )}
+                                </div>
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs">Observaciones</Label>
+                                <Textarea value={panel.observaciones} onChange={(e) => updatePanel(pIdx, "observaciones", e.target.value)} rows={2} className="text-sm" />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs">Archivos adjuntos</Label>
+                                <Button type="button" variant="outline" size="sm" onClick={() => document.getElementById(`cot-file-${pIdx}`)?.click()}>
+                                  + Adjuntar
+                                </Button>
+                                <input id={`cot-file-${pIdx}`} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.doc,.docx" className="hidden"
+                                  onChange={(e) => { if (e.target.files?.length) { addPanelArchivos(pIdx, e.target.files); e.target.value = "" } }} />
+                                {panel.archivos.length > 0 && (
+                                  <div className="space-y-1 mt-1">
+                                    {panel.archivos.map(a => (
+                                      <div key={a.key} className="flex items-center justify-between px-2 py-1 text-xs border rounded-md">
+                                        {a.url ? <a href={a.url} target="_blank" className="truncate underline hover:text-primary">{a.nombre}</a> : <span className="truncate">{a.nombre}</span>}
+                                        <Button type="button" variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => removePanelArchivo(pIdx, a.key)}>✕</Button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </CardContent>
+                          )}
+                        </Card>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </FormDialog>
 
@@ -1417,11 +1448,14 @@ export default function ComprasPage() {
                       <div><span className="text-muted-foreground">Forma de Pago: </span>{c.formaPago || "—"}</div>
                       <div><span className="text-muted-foreground">Tiempo Entrega: </span>{c.tiempoEntrega || "—"}</div>
                       <div><span className="text-muted-foreground">Ganadora: </span>{c.ganadora ? <Badge variant="success">Sí</Badge> : <Badge variant="secondary">No</Badge>}</div>
+                      {c.aprobadaPublicamente && (
+                        <div><span className="text-muted-foreground">Aprobación pública: </span><Badge variant="success">Aprobada{c.fechaAprobacionPublica ? ` ${formatDate(c.fechaAprobacionPublica)}` : ""}</Badge></div>
+                      )}
                     </div>
                     {c.observaciones && <p className="text-sm"><span className="text-muted-foreground">Observaciones: </span>{c.observaciones}</p>}
                     <Separator />
                     <table className="w-full text-sm">
-                      <thead><tr className="border-b text-muted-foreground"><th className="text-left py-2">#</th><th className="text-left py-2">Descripción</th><th className="text-center py-2">Unidad</th><th className="text-right py-2">Cantidad</th><th className="text-right py-2">V. Unitario</th><th className="text-right py-2">V. Total</th></tr></thead>
+                      <thead><tr className="border-b text-muted-foreground"><th className="text-left py-2">#</th><th className="text-left py-2">Descripción</th><th className="text-center py-2">Und</th><th className="text-right py-2">Cant</th><th className="text-right py-2">V. Unitario</th><th className="text-right py-2">V. Total</th></tr></thead>
                       <tbody>
                         {(c as any).items?.map((i: any) => (
                           <tr key={i.id} className="border-b last:border-0">
@@ -1429,7 +1463,7 @@ export default function ComprasPage() {
                             <td className="py-2">{i.descripcion}</td>
                             <td className="py-2 text-center">{i.unidadMedida}</td>
                             <td className="py-2 text-right font-mono">{Number(i.cantidad)}</td>
-                            <td className="py-2 text-right font-mono">{formatMoney(Number(i.valorUnitario))}</td>
+                            <td className="py-2 text-right font-mono">{formatMoney(Number(i.valorUnitario || 0))}</td>
                             <td className="py-2 text-right font-mono">{formatMoney(Number(i.valorTotal))}</td>
                           </tr>
                         ))}
@@ -1449,149 +1483,75 @@ export default function ComprasPage() {
                         </div>
                       </>
                     )}
+                    {(() => {
+                      const linkLocal = cotLinkData[c.id]
+                      const token = c.tokenPublico || linkLocal?.token
+                      const urlLink = linkLocal?.url || (token ? `${origin}/publico/cotizacion/${token}` : "")
+                      return (
+                        <>
+                          <Separator />
+                          <div className="space-y-3">
+                            <Label>Link público</Label>
+                            {token ? (
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2 text-sm">
+                                  <Input
+                                    readOnly
+                                    value={urlLink}
+                                    className="text-xs font-mono"
+                                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                                  />
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      if (navigator.clipboard) navigator.clipboard.writeText(urlLink)
+                                      toast({ title: "Link copiado", variant: "success" })
+                                    }}
+                                  >
+                                    <Copy className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  Los códigos de aprobación se administran en{" "}
+                                  <Link href="/codigos-aprobacion" className="underline underline-offset-2 hover:text-primary">
+                                    Códigos Aprobación
+                                  </Link>
+                                </p>
+                                <Button variant="outline" size="sm" onClick={() => handleLimpiarLink(c.id)}>
+                                  Eliminar link
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleGenerarLink(c.id)}
+                                disabled={cotGenerandoLink === c.id}
+                              >
+                                <LinkIcon className="mr-2 h-4 w-4" />
+                                {cotGenerandoLink === c.id ? "Generando..." : "Generar link público"}
+                              </Button>
+                            )}
+                          </div>
+                        </>
+                      )
+                    })()}
                   </div>
                 )
               })()}
             </DialogContent>
           </Dialog>
 
-          {/* Confirmar guardar cotización */}
-          <Dialog open={cotConfirmOpen} onOpenChange={setCotConfirmOpen}>
-            <DialogContent className="sm:max-w-[400px]">
-              <DialogHeader>
-                <DialogTitle>Guardar Cotizaci&oacute;n</DialogTitle>
-                <DialogDescription>&iquest;Est&aacute;s seguro de guardar esta cotizaci&oacute;n?</DialogDescription>
-              </DialogHeader>
-              <div className="flex justify-end gap-3 pt-2">
-                <Button variant="outline" onClick={() => setCotConfirmOpen(false)}>Cancelar</Button>
-                <Button onClick={confirmCotSave}><Save className="mr-2 h-4 w-4" />Guardar</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </Tabs.Content>
-
-        {/* ═══ APROBACIONES ═══ */}
-        <Tabs.Content value="aprobaciones" className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-medium">Requisiciones Pendientes de Aprobación</h3>
-            <Button variant="outline" onClick={() => { setAprobConfigForm({ desde: "", hasta: "", cargoAprobador: "" }); setAprobConfigDialogOpen(true) }}><Settings className="mr-2 h-4 w-4" />Configurar Reglas</Button>
-          </div>
-          <DataTable columns={aprobColumns} data={aprobPendientes} loading={aprobLoading} />
-
-          {/* Modal Aprobar */}
-          <Dialog open={aprobModalOpen} onOpenChange={(o) => !o && setAprobModalOpen(false)}>
-            <DialogContent className="sm:max-w-[480px]">
-              <DialogHeader>
-                <DialogTitle>Aprobar Requisición</DialogTitle>
-                <DialogDescription>
-                  {aprobModalReqId && (() => {
-                    const r = aprobPendientes.find(x => x.id === aprobModalReqId)
-                    return r ? `Req #${r.numero} — ${r.areaSolicitante} — ${r.items.length} ítems` : ""
-                  })()}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="aprob-comentario">Comentarios <span className="text-muted-foreground font-normal">(opcional)</span></Label>
-                  <textarea
-                    id="aprob-comentario"
-                    className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    placeholder="Agrega un comentario si es necesario..."
-                    value={aprobModalComentario}
-                    onChange={(e) => setAprobModalComentario(e.target.value)}
-                  />
-                </div>
-                <div className="flex justify-end gap-3 pt-2">
-                  <Button variant="outline" onClick={() => setAprobModalOpen(false)}>Cancelar</Button>
-                  <Button onClick={confirmAprobar}>
-                    <CheckCircle className="mr-2 h-4 w-4" />Aprobar
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          {/* Modal Rechazar */}
-          <Dialog open={rechazarModalOpen} onOpenChange={(o) => !o && setRechazarModalOpen(false)}>
-            <DialogContent className="sm:max-w-[480px]">
-              <DialogHeader>
-                <DialogTitle>Rechazar Requisición</DialogTitle>
-                <DialogDescription>
-                  {rechazarModalReqId && (() => {
-                    const r = aprobPendientes.find(x => x.id === rechazarModalReqId)
-                    return r ? `Req #${r.numero} — ${r.areaSolicitante} — ${r.items.length} ítems` : ""
-                  })()}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="rechazar-motivo">Motivo del rechazo <span className="text-destructive">*</span></Label>
-                  <textarea
-                    id="rechazar-motivo"
-                    className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    placeholder="Indica el motivo por el cual se rechaza..."
-                    value={rechazarModalMotivo}
-                    onChange={(e) => setRechazarModalMotivo(e.target.value)}
-                  />
-                  {!rechazarModalMotivo.trim() && (
-                    <p className="text-xs text-destructive">El motivo es obligatorio</p>
-                  )}
-                </div>
-                <div className="flex justify-end gap-3 pt-2">
-                  <Button variant="outline" onClick={() => setRechazarModalOpen(false)}>Cancelar</Button>
-                  <Button variant="destructive" onClick={confirmRechazar} disabled={!rechazarModalMotivo.trim()}>
-                    <XCircle className="mr-2 h-4 w-4" />Rechazar
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          <Separator />
-          <h3 className="text-lg font-medium">Reglas de Aprobación</h3>
-          {aprobConfigs.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No hay reglas configuradas</p>
-          ) : (
-            <div className="space-y-2">
-              {aprobConfigs.map(ac => (
-                <div key={ac.id} className="flex items-center justify-between rounded-md border p-3">
-                  <div className="text-sm">
-                    <span className="font-medium">${formatMoney(ac.desde)}</span> a <span className="font-medium">${formatMoney(ac.hasta)}</span>
-                    <span className="text-muted-foreground ml-4">→ Aprobador: {ac.cargoAprobador}</span>
-                  </div>
-                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleAprobConfigDelete(ac.id)}><Trash2 className="h-4 w-4" /></Button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <FormDialog open={aprobConfigDialogOpen} onOpenChange={setAprobConfigDialogOpen} title="Nueva Regla de Aprobación" description="Define rangos de valor y aprobadores" loading={aprobConfigSaving} onSubmit={handleAprobConfigSave as any}>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Desde ($)</Label>
-                  <Input type="number" step="0.01" min="0" value={aprobConfigForm.desde} onChange={(e) => setAprobConfigForm(p => ({ ...p, desde: e.target.value }))} required />
-                </div>
-                <div className="space-y-2">
-                  <Label>Hasta ($)</Label>
-                  <Input type="number" step="0.01" min="0" value={aprobConfigForm.hasta} onChange={(e) => setAprobConfigForm(p => ({ ...p, hasta: e.target.value }))} required />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label>Cargo del Aprobador</Label>
-                <Input value={aprobConfigForm.cargoAprobador} onChange={(e) => setAprobConfigForm(p => ({ ...p, cargoAprobador: e.target.value }))} required placeholder="Ej: Gerente de Compras, Presidente" />
-              </div>
-            </div>
-          </FormDialog>
         </Tabs.Content>
 
         {/* ═══ ORDENES DE COMPRA ═══ */}
         <Tabs.Content value="ordenes" className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Input placeholder="Buscar por número o proveedor..." value={ocSearch} onChange={(e) => setOcSearch(e.target.value)} className="max-w-sm" />
-            <Button onClick={openOCCreate}><Plus className="mr-2 h-4 w-4" />Generar OC</Button>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+            <Input placeholder="Buscar por número o proveedor..." value={ocSearch} onChange={(e) => setOcSearch(e.target.value)} className="w-full sm:max-w-sm" />
+            <Button onClick={openOCCreate} className="w-full sm:w-auto"><Plus className="mr-2 h-4 w-4" />Generar OC</Button>
           </div>
-          <DataTable columns={ocColumns} data={filteredOCs} loading={ocLoading} />
+          <DataTable columns={ocColumns} data={filteredOCs} loading={ocLoading} mobileCardTitle={(o) => <>OC <span className="font-mono">#{o.numero}</span> — {o.proveedor?.razonSocial}</>} />
 
           <Dialog open={ocDetailId !== null} onOpenChange={(o) => !o && setOcDetailId(null)}>
             <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
@@ -1609,9 +1569,9 @@ export default function ComprasPage() {
                     </div>
                     <Separator />
                     <table className="w-full text-sm">
-                      <thead><tr className="border-b text-muted-foreground"><th className="text-left py-2">#</th><th className="text-left py-2">Descripción</th><th className="text-left py-2">Unidad</th><th className="text-right py-2">Cantidad</th><th className="text-right py-2">V. Unitario</th><th className="text-right py-2">V. Total</th></tr></thead>
+                      <thead><tr className="border-b text-muted-foreground"><th className="text-left py-2">#</th><th className="text-left py-2">Descripción</th><th className="text-left py-2">Unidad</th><th className="text-right py-2">Cantidad</th><th className="text-right py-2">V. Unitario</th><th className="text-right py-2">V. Total</th><th className="text-center py-2">IVA</th></tr></thead>
                       <tbody>
-                        {o.items.map((i) => (
+                        {o.items.map((i: any) => (
                           <tr key={i.id} className="border-b last:border-0">
                             <td className="py-2">{i.item}</td>
                             <td className="py-2">{i.descripcion}</td>
@@ -1619,17 +1579,64 @@ export default function ComprasPage() {
                             <td className="py-2 text-right font-mono">{Number(i.cantidad)}</td>
                             <td className="py-2 text-right font-mono">{formatMoney(Number(i.valorUnitario))}</td>
                             <td className="py-2 text-right font-mono">{formatMoney(Number(i.valorTotal))}</td>
+                            <td className="py-2 text-center text-xs">{i.tipoIva === "IVA_19" ? "19%" : i.tipoIva === "IVA_5" ? "5%" : "—"}</td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot>
-                        <tr className="border-t font-medium"><td colSpan={5} className="py-2 text-right">Subtotal:</td><td className="py-2 text-right font-mono">{formatMoney(o.items.reduce((s: number, i: any) => s + Number(i.valorTotal), 0))}</td></tr>
-                        <tr className="font-medium"><td colSpan={5} className="py-2 text-right">IVA (16%):</td><td className="py-2 text-right font-mono">{formatMoney(o.items.reduce((s: number, i: any) => s + Number(i.valorTotal), 0) * 0.16)}</td></tr>
-                        <tr className="font-medium text-lg"><td colSpan={5} className="py-2 text-right">Total:</td><td className="py-2 text-right font-mono">{formatMoney(o.valorTotal)}</td></tr>
+                        <tr className="border-t font-medium"><td colSpan={6} className="py-2 text-right">Subtotal:</td><td className="py-2 text-right font-mono">{formatMoney(o.items.reduce((s: number, i: any) => s + Number(i.valorTotal), 0))}</td></tr>
+                        <tr className="font-medium"><td colSpan={6} className="py-2 text-right">IVA:</td><td className="py-2 text-right font-mono">{formatMoney(o.items.reduce((s: number, i: any) => s + (i.tipoIva === "IVA_19" ? Number(i.valorTotal) * 0.19 : i.tipoIva === "IVA_5" ? Number(i.valorTotal) * 0.05 : 0), 0))}</td></tr>
+                        <tr className="font-medium text-lg"><td colSpan={6} className="py-2 text-right">Total:</td><td className="py-2 text-right font-mono">{formatMoney(o.valorTotal)}</td></tr>
                       </tfoot>
                     </table>
                     <Separator />
                     <HistorialEstados entidadTipo="ORDEN_COMPRA" entidadId={o.id} />
+                    <Separator />
+                    {(() => {
+                      const linkLocal = ocLinkData[o.id]
+                      const token = (o as any).tokenPublico || linkLocal?.token
+                      const urlLink = linkLocal?.url || (token ? `${origin}/publico/orden-compra/${token}` : "")
+                      return (
+                        <div className="space-y-3">
+                          <Label>Compartir orden</Label>
+                          {token ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2 text-sm">
+                                <Input
+                                  readOnly
+                                  value={urlLink}
+                                  className="text-xs font-mono"
+                                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                                />
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    if (navigator.clipboard) navigator.clipboard.writeText(urlLink)
+                                    toast({ title: "Link copiado", variant: "success" })
+                                  }}
+                                >
+                                  <Copy className="h-4 w-4" />
+                                </Button>
+                              </div>
+                              <Button variant="outline" size="sm" onClick={() => handleOCLimpiarLink(o.id)}>
+                                Eliminar link
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleOCGenerarLink(o.id)}
+                              disabled={ocGenerandoLink === o.id}
+                            >
+                              <LinkIcon className="mr-2 h-4 w-4" />
+                              {ocGenerandoLink === o.id ? "Generando..." : "Generar link público"}
+                            </Button>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </div>
                 )
               })()}
@@ -1643,7 +1650,7 @@ export default function ComprasPage() {
                 <Select value={ocForm.requisicionId} onValueChange={handleReqSelectForOC}>
                   <SelectTrigger><SelectValue placeholder="Seleccionar requisición aprobada..." /></SelectTrigger>
                   <SelectContent>
-                    {requisiciones.filter(r => r.estado === "APROBADA" || r.estado === "EN_COTIZACION").map(r => (
+                    {requisiciones.filter(r => r.estado === "EN_COTIZACION").map(r => (
                       <SelectItem key={r.id} value={r.id}>Req #{r.numero} - {r.areaSolicitante}</SelectItem>
                     ))}
                   </SelectContent>
@@ -1660,7 +1667,7 @@ export default function ComprasPage() {
                 <div className="space-y-2">
                   <Label>Centro Costos</Label>
                   <Select value={ocForm.centroCostosId} onValueChange={(v) => setOcForm(p => ({ ...p, centroCostosId: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Ninguno" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="01 - Principal" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value=" ">Ninguno</SelectItem>
                       {centrosCostos.map(cc => <SelectItem key={cc.id} value={cc.id}>{cc.codigo} - {cc.nombre}</SelectItem>)}
@@ -1701,56 +1708,129 @@ export default function ComprasPage() {
                 <Label>Observaciones</Label>
                 <Input value={ocForm.observaciones} onChange={(e) => setOcForm(p => ({ ...p, observaciones: e.target.value }))} />
               </div>
+
               <Separator />
-              <div className="flex items-center justify-between">
-                <Label>Items</Label>
-                <Button type="button" variant="outline" size="sm" onClick={addOCItem}><Plus className="mr-1 h-3.5 w-3.5" />Agregar</Button>
-              </div>
-              {ocForm.items.map((det, idx) => (
-                <div key={idx} className="space-y-2 rounded-md border p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">Item {idx + 1}</span>
-                    {ocForm.items.length > 1 && <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeOCItem(idx)}><Trash2 className="h-3.5 w-3.5" /></Button>}
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Descripción</Label>
-                    <Input value={det.descripcion} onChange={(e) => updateOCItem(idx, "descripcion", e.target.value)} required />
-                  </div>
-                  <div className="grid grid-cols-4 gap-2">
-                    <div className="space-y-2"><Label>Unidad</Label><Input value={det.unidadMedida} onChange={(e) => updateOCItem(idx, "unidadMedida", e.target.value)} required /></div>
-                    <div className="space-y-2"><Label>Cantidad</Label><Input type="number" step="0.01" min="0" value={det.cantidad} onChange={(e) => updateOCItem(idx, "cantidad", parseFloat(e.target.value) || 0)} required /></div>
-                    <div className="space-y-2"><Label>V. Unitario</Label><Input type="number" step="0.01" min="0" value={det.valorUnitario} onChange={(e) => updateOCItem(idx, "valorUnitario", parseFloat(e.target.value) || 0)} required /></div>
-                    <div className="space-y-2"><Label>V. Total</Label><div className="flex h-9 items-center text-sm font-mono">{formatMoney(det.cantidad * det.valorUnitario)}</div></div>
-                  </div>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-base font-medium">Items</Label>
                 </div>
-              ))}
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/50">
+                        <th className="text-left px-3 py-2 font-medium w-12">#</th>
+                          <th className="text-left px-3 py-2 font-medium">Descripción</th>
+                          <th className="text-left px-3 py-2 font-medium w-20">Und</th>
+                          <th className="text-right px-3 py-2 font-medium w-24">Cant</th>
+                          <th className="text-right px-3 py-2 font-medium w-28">V. Unitario</th>
+                          <th className="text-right px-3 py-2 font-medium w-28">V. Total</th>
+                          <th className="text-center px-3 py-2 font-medium w-24">IVA</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ocForm.items.map((det, idx) => (
+                          <tr key={idx} className="border-b last:border-0">
+                            <td className="px-3 py-2 text-sm text-muted-foreground">{idx + 1}</td>
+                            <td className="px-3 py-2">
+                              <Input
+                                value={det.descripcion}
+                                onChange={(e) => updateOCItem(idx, "descripcion", e.target.value)}
+                                className="h-8 border-0 focus-visible:ring-1 px-0"
+                                required
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <Input
+                                value={det.unidadMedida}
+                                onChange={(e) => updateOCItem(idx, "unidadMedida", e.target.value)}
+                                className="h-8 border-0 focus-visible:ring-1 px-0"
+                                required
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={det.cantidad || ""}
+                                onChange={(e) => updateOCItem(idx, "cantidad", parseFloat(e.target.value) || 0)}
+                                className="h-8 border-0 focus-visible:ring-1 px-0 text-right font-mono"
+                                required
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={det.valorUnitario || ""}
+                                onChange={(e) => updateOCItem(idx, "valorUnitario", parseFloat(e.target.value) || 0)}
+                                className="h-8 border-0 focus-visible:ring-1 px-0 text-right font-mono"
+                                required
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-sm">
+                              {formatMoney(det.cantidad * det.valorUnitario)}
+                            </td>
+                            <td className="px-3 py-2">
+                              <Select value={det.tipoIva} onValueChange={(v) => updateOCItem(idx, "tipoIva", v)}>
+                                <SelectTrigger className="h-8 text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="EXENTO">Exento</SelectItem>
+                                  <SelectItem value="IVA_5">5%</SelectItem>
+                                  <SelectItem value="IVA_19">19%</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                  </table>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={addOCItem} className="w-full">
+                  <Plus className="mr-2 h-4 w-4" />Agregar Item
+                </Button>
+              </div>
 
               <Separator />
               {/* ─── Totales ──────────────────────────────── */}
               {(() => {
                 const sub = ocForm.items.reduce((s, i) => s + (Number(i.cantidad) || 0) * (Number(i.valorUnitario) || 0), 0)
-                const iva = ocForm.aplicaIVA ? Math.round(sub * 0.16 * 100) / 100 : 0
+                const iva5 = ocForm.items.reduce((s, i) => {
+                  if (i.tipoIva !== "IVA_5") return s
+                  const base = (Number(i.cantidad) || 0) * (Number(i.valorUnitario) || 0)
+                  return s + Math.round(base * 0.05 * 100) / 100
+                }, 0)
+                const iva19 = ocForm.items.reduce((s, i) => {
+                  if (i.tipoIva !== "IVA_19") return s
+                  const base = (Number(i.cantidad) || 0) * (Number(i.valorUnitario) || 0)
+                  return s + Math.round(base * 0.19 * 100) / 100
+                }, 0)
+                const iva = iva5 + iva19
                 const total = sub + iva
                 return (
                   <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Label>IVA</Label>
-                      <input type="checkbox" checked={ocForm.aplicaIVA} onChange={(e) => setOcForm(p => ({ ...p, aplicaIVA: e.target.checked }))} className="h-4 w-4" />
-                      <span className="text-sm text-muted-foreground">Aplicar IVA (16%)</span>
-                    </div>
                     <div className="rounded-md border p-4 space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span>Subtotal</span>
                         <span className="font-mono">{formatMoney(sub)}</span>
                       </div>
-                      {ocForm.aplicaIVA && (
-                        <div className="flex justify-between">
-                          <span>IVA (16%)</span>
-                          <span className="font-mono">{formatMoney(iva)}</span>
+                      {iva5 > 0 && (
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>IVA (5%)</span>
+                          <span className="font-mono">{formatMoney(iva5)}</span>
+                        </div>
+                      )}
+                      {iva19 > 0 && (
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>IVA (19%)</span>
+                          <span className="font-mono">{formatMoney(iva19)}</span>
                         </div>
                       )}
                       <Separator />
-                      <div className="flex justify-between font-medium">
+                      <div className="flex justify-between font-medium text-base">
                         <span>Total</span>
                         <span className="font-mono">{formatMoney(total)}</span>
                       </div>
@@ -1762,84 +1842,12 @@ export default function ComprasPage() {
           </FormDialog>
         </Tabs.Content>
 
-        {/* ═══ RECEPCION ═══ */}
-        <Tabs.Content value="recepcion" className="space-y-4">
-          <div className="flex justify-end">
-            <Button onClick={openRecCreate}><Plus className="mr-2 h-4 w-4" />Registrar Recepción</Button>
-          </div>
-          <DataTable columns={recColumns} data={recepciones} loading={recLoading} />
-
-          <FormDialog open={recDialogOpen} onOpenChange={setRecDialogOpen} title="Registrar Recepción" description="Registra la recepción de bienes o servicios" loading={recSaving} onSubmit={handleRecSave as any}>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Orden de Compra</Label>
-                <Select value={recForm.ordenCompraId} onValueChange={handleOCSelectForRec}>
-                  <SelectTrigger><SelectValue placeholder="Seleccionar OC..." /></SelectTrigger>
-                  <SelectContent>
-                    {ordenes.filter(o => o.estado !== "CERRADA").map(o => (
-                      <SelectItem key={o.id} value={o.id}>OC #{o.numero} - {o.proveedor?.razonSocial}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Remisión</Label>
-                  <Input value={recForm.remision} onChange={(e) => setRecForm(p => ({ ...p, remision: e.target.value }))} />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label>Observaciones</Label>
-                <Input value={recForm.observaciones} onChange={(e) => setRecForm(p => ({ ...p, observaciones: e.target.value }))} />
-              </div>
-              <Separator />
-              <Label>Items Recibidos</Label>
-              {recForm.items.map((det, idx) => (
-                <div key={idx} className="space-y-2 rounded-md border p-3">
-                  <span className="text-xs text-muted-foreground">{det.descripcion}</span>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Cantidad Recibida</Label>
-                      <Input type="number" step="0.01" min="0" value={det.cantidadRecibida} onChange={(e) => updateRecItem(idx, "cantidadRecibida", parseFloat(e.target.value) || 0)} required />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Observaciones</Label>
-                      <Input value={det.observaciones} onChange={(e) => updateRecItem(idx, "observaciones", e.target.value)} />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </FormDialog>
-        </Tabs.Content>
-
-        {/* ═══ PROVEEDORES ═══ */}
-        <Tabs.Content value="proveedores" className="space-y-4">
-          <div className="flex justify-end">
-            <Button onClick={openProvCreate}><Plus className="mr-2 h-4 w-4" />Nuevo Proveedor</Button>
-          </div>
-          <DataTable columns={provColumns} data={proveedores} />
-
-          <FormDialog open={provDialogOpen} onOpenChange={setProvDialogOpen} title={provEditId ? "Editar Proveedor" : "Nuevo Proveedor"} loading={provSaving} onSubmit={handleProvSave as any}>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2"><Label>Razón Social</Label><Input value={provForm.razonSocial} onChange={(e) => setProvForm(p => ({ ...p, razonSocial: e.target.value }))} required /></div>
-                <div className="space-y-2"><Label>NIT</Label><Input value={provForm.nit} onChange={(e) => setProvForm(p => ({ ...p, nit: e.target.value }))} required /></div>
-                <div className="space-y-2"><Label>Contacto</Label><Input value={provForm.contacto} onChange={(e) => setProvForm(p => ({ ...p, contacto: e.target.value }))} /></div>
-                <div className="space-y-2"><Label>Teléfono</Label><Input value={provForm.telefono} onChange={(e) => setProvForm(p => ({ ...p, telefono: e.target.value }))} /></div>
-                <div className="space-y-2"><Label>Email</Label><Input type="email" value={provForm.email} onChange={(e) => setProvForm(p => ({ ...p, email: e.target.value }))} /></div>
-                <div className="space-y-2"><Label>Dirección</Label><Input value={provForm.direccion} onChange={(e) => setProvForm(p => ({ ...p, direccion: e.target.value }))} /></div>
-              </div>
-            </div>
-          </FormDialog>
-        </Tabs.Content>
-
         {/* ═══ CENTROS COSTOS ═══ */}
         <Tabs.Content value="centros-costos" className="space-y-4">
           <div className="flex justify-end">
-            <Button onClick={openCCCreate}><Plus className="mr-2 h-4 w-4" />Nuevo Centro Costos</Button>
+            <Button onClick={openCCCreate} className="w-full sm:w-auto"><Plus className="mr-2 h-4 w-4" />Nuevo Centro Costos</Button>
           </div>
-          <DataTable columns={ccColumns} data={centrosCostos} />
+          <DataTable columns={ccColumns} data={centrosCostos} mobileCardTitle={(c) => <><span className="font-mono">{c.codigo}</span> — {c.nombre}</>} />
 
           <FormDialog open={ccDialogOpen} onOpenChange={setCcDialogOpen} title={ccEditId ? "Editar Centro Costos" : "Nuevo Centro Costos"} loading={ccSaving} onSubmit={handleCCSave as any}>
             <div className="space-y-4">
@@ -1852,10 +1860,6 @@ export default function ComprasPage() {
           </FormDialog>
         </Tabs.Content>
 
-        {/* ═══ CONFIG APROBACION ═══ */}
-        <Tabs.Content value="config" className="space-y-4">
-          <p className="text-sm text-muted-foreground">Gestiona las reglas de aprobación desde la pestaña de Aprobaciones.</p>
-        </Tabs.Content>
       </Tabs.Root>
     </div>
   )

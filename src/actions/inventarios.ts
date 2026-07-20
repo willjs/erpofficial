@@ -5,6 +5,7 @@ import { verifySession } from "@/lib/dal"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { verificarPermiso } from "@/lib/permisos"
+import { AutomationService } from "@/lib/automation-service"
 
 function serializar<T>(obj: T): T {
   if (obj == null || typeof obj !== "object") return obj
@@ -123,6 +124,15 @@ export async function createProducto(data: ProductoFormData) {
       },
     },
   })
+
+  AutomationService.ejecutarEvento({
+    empresaId,
+    codigoEvento: "PRODUCTO_CREADO",
+    entidadTipo: "PRODUCTO",
+    entidadId: result.id,
+    usuarioId: userId,
+  }).catch(() => {})
+
   revalidatePath("/inventarios")
   return result
 }

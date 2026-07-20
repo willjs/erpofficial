@@ -57,3 +57,36 @@
 - Fix AdminUsuariosPage crash: agregar optional chaining (`u.empresa?.nombre`) para evitar error de lectura en usuarios sin empresa vinculada
 - AdminUsuarios: implementar funcionalidad de edición/actualización de usuarios en la vista global `/admin/usuarios` para Super Administradores
 
+### Mejoras 03/07/2026:
+- IVA por item en Órdenes de Compra
+  - Nuevo campo `tipoIva String @default("EXENTO")` en modelo `OrdenCompraItem`
+  - Cada item puede seleccionar Exento / 5% / 19%
+  - IVA total calculado como suma de IVA por item (reemplazó IVA global 16%)
+  - Columna IVA en tabla del formulario creación, detalle y vista pública
+  - `prisma db push` ejecutado, build exitoso
+
+- Duplicar OC implementado (botón "Duplicar" en acciones de OC)
+  - Server action `duplicarOrdenCompra` clona OC con items, observaciones con referencia a OC original
+  - Botón visible en cualquier estado de OC en la tabla de Órdenes de Compra
+  - Build exitoso
+
+### Mejoras 03/07/2026:
+- Proveedores extraído de Compras como módulo independiente
+  - Nuevo campo `emailFactura` en modelo Proveedor
+  - Nueva página `/proveedores` con CRUD completo
+  - Sidebar: nueva entrada "Proveedores" con módulo PROVEEDORES
+  - Pestaña "Proveedores" eliminada del módulo Compras
+  - Server actions actualizadas con `emailFactura` y `revalidatePath("/proveedores")`
+  - Permisos `PROVEEDORES` registrados en admin.ts
+  - `prisma db push` ejecutado, build exitoso
+
+### Mejoras responsive (30/06/2026):
+- Sidebar responsive: off-canvas móvil con overlay, hamburger toggle, cierre automático al navegar
+- SidebarProvider (`src/components/sidebar-provider.tsx`) para estado del menú mobile
+- "Configuración" movido al final del sidebar con separador
+- DataTable: vista en cards en mobile (`md:hidden` cards, `hidden md:block` tabla)
+- Action bars (search + buttons) en `flex-col sm:flex-row` con `w-full sm:w-auto` en todos los módulos
+- PageHeader responsive (stack vertical en mobile)
+- Nómina: grid de totales single-column en mobile, detalles table con scroll horizontal, columna "Fórmula" oculta en mobile
+- Inventarios: action bars stack vertical, tabs con `overflow-x-auto`, `mobileCardTitle` en las 4 tablas (productos, almacenes, stock, movimientos)
+

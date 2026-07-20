@@ -387,12 +387,12 @@ export default function NominaPage() {
         title="Nómina"
         description="Gestión de nóminas y pagos"
         actions={
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setMasivoDialogOpen(true)}>
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            <Button variant="outline" onClick={() => setMasivoDialogOpen(true)} className="w-full sm:w-auto">
               <Users className="mr-2 h-4 w-4" />
               Generar Masivo
             </Button>
-            <Button onClick={openCreateDialog}>
+            <Button onClick={openCreateDialog} className="w-full sm:w-auto">
               <Plus className="mr-2 h-4 w-4" />
               Nueva Nómina
             </Button>
@@ -438,13 +438,13 @@ export default function NominaPage() {
       {selectedNomina && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>
+            <CardTitle className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <span className="text-base sm:text-lg">
                 Detalles — {selectedNomina.empleado.nombre} {selectedNomina.empleado.apellido}
                 {" — "}{selectedNomina.periodo}
               </span>
               {(selectedNomina.estado as EstadoNomina) === "BORRADOR" && (
-                <Button size="sm" onClick={openCreateDetalle}>
+                <Button size="sm" onClick={openCreateDetalle} className="w-full sm:w-auto">
                   <Plus className="mr-2 h-4 w-4" />
                   Agregar Concepto
                 </Button>
@@ -456,13 +456,14 @@ export default function NominaPage() {
               <div className="text-center text-muted-foreground py-4">Cargando detalles...</div>
             ) : (
               <>
+                <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Concepto</TableHead>
                       <TableHead>Tipo</TableHead>
                       <TableHead className="text-right">Monto</TableHead>
-                      <TableHead>Fórmula</TableHead>
+                      <TableHead className="hidden sm:table-cell">Fórmula</TableHead>
                       {(selectedNomina.estado as EstadoNomina) === "BORRADOR" && <TableHead className="w-[80px]"></TableHead>}
                     </TableRow>
                   </TableHeader>
@@ -483,7 +484,7 @@ export default function NominaPage() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">{formatMoney(d.monto)}</TableCell>
-                          <TableCell className="text-muted-foreground text-sm">{d.formula || "—"}</TableCell>
+                          <TableCell className="hidden sm:table-cell text-muted-foreground text-sm">{d.formula || "—"}</TableCell>
                           {(selectedNomina.estado as EstadoNomina) === "BORRADOR" && (
                             <TableCell>
                               <div className="flex gap-1">
@@ -501,10 +502,11 @@ export default function NominaPage() {
                     )}
                   </TableBody>
                 </Table>
+                </div>
 
                 <Separator />
 
-                <div className="grid grid-cols-3 gap-4 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
                   <div className="space-y-1">
                     <span className="text-muted-foreground">Total Devengado</span>
                     <p className="text-lg font-semibold text-green-600">{formatMoney(selectedNomina.totalDevengado)}</p>

@@ -9,12 +9,14 @@ import {
   Users,
   ArrowLeft,
   Shield,
+  Key,
 } from "lucide-react"
 
 const menuItems = [
   { href: "/admin", label: "Dashboard Global", icon: LayoutDashboard },
   { href: "/admin/empresas", label: "Empresas", icon: Building2 },
   { href: "/admin/usuarios", label: "Usuarios", icon: Users },
+  { href: "/admin/codigos-aprobacion", label: "Códigos Aprobación", icon: Key },
 ]
 
 export function AdminSidebar() {

@@ -346,7 +346,7 @@ export async function deleteAsiento(id: string) {
 
 export async function contabilizarAsiento(id: string) {
   const { empresaId, userId } = await verifySession()
-  await verificarPermiso(userId, { recurso: "asiento_contable", accion: "UPDATE" })
+  await verificarPermiso(userId, { recurso: "asiento_contable", accion: "APROBAR" })
 
   const asiento = await prisma.asientoContable.findFirst({
     where: { id, empresaId },
@@ -557,7 +557,7 @@ export async function getBalanceGeneral(corte: string) {
     saldo: c.tipo === "ACTIVO" || c.tipo === "GASTO" ? c.debe - c.haber : c.haber - c.debe,
   }))
 
-  const grouped: Record<string, any> = { ACTIVO: [], PASIVO: [], PATRIMONIO: [] }
+  const grouped: Record<string, any> = { ACTIVO: [], PASIVO: [], PATRIMONIO: [], GASTO: [], INGRESO: [] }
   for (const c of cuentas) {
     if (grouped[c.tipo]) grouped[c.tipo].push(c)
   }
@@ -567,6 +567,8 @@ export async function getBalanceGeneral(corte: string) {
     activo: { cuentas: grouped.ACTIVO, total: grouped.ACTIVO.reduce((s: number, c: any) => s + c.saldo, 0) },
     pasivo: { cuentas: grouped.PASIVO, total: grouped.PASIVO.reduce((s: number, c: any) => s + c.saldo, 0) },
     patrimonio: { cuentas: grouped.PATRIMONIO, total: grouped.PATRIMONIO.reduce((s: number, c: any) => s + c.saldo, 0) },
+    gasto: { cuentas: grouped.GASTO, total: grouped.GASTO.reduce((s: number, c: any) => s + c.saldo, 0) },
+    ingreso: { cuentas: grouped.INGRESO, total: grouped.INGRESO.reduce((s: number, c: any) => s + c.saldo, 0) },
   }
 }
 
@@ -694,7 +696,7 @@ export async function getAuxiliarProveedores(desde: string, hasta: string) {
   return cuentasPagar.map((cp) => ({
     id: cp.id,
     numeroFactura: cp.numeroFactura,
-    proveedor: cp.ordenCompra.proveedor,
+    proveedor: cp.ordenCompra?.proveedor ?? null,
     fecha: cp.createdAt.toISOString(),
     valor: Number(cp.valor),
     saldoPendiente: Number(cp.saldoPendiente),

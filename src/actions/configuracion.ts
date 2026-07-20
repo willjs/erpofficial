@@ -1,11 +1,13 @@
 "use server"
 
 import { verifySession } from "@/lib/dal"
-import { verificarPermiso } from "@/lib/permisos"
+import { verificarPermiso, asegurarPermisosOperaciones } from "@/lib/permisos"
 import { prisma } from "@/lib/prisma"
 import bcrypt from "bcryptjs"
 import { z } from "zod"
 import { revalidatePath } from "next/cache"
+import path from "path"
+import { mkdir, writeFile, unlink } from "fs/promises"
 
 // ─── Empresa ─────────────────────────────────────────────
 
@@ -42,6 +44,51 @@ export async function updateEmpresa(data: z.infer<typeof empresaSchema>) {
   })
   revalidatePath("/configuracion")
   return empresa
+}
+
+export async function uploadLogo(base64: string) {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "empresa", accion: "UPDATE" })
+
+  const buffer = Buffer.from(base64, "base64")
+  const uploadDir = path.join(process.cwd(), "public", "uploads", "logos")
+  await mkdir(uploadDir, { recursive: true })
+
+  const ext = "png"
+  const fileName = `${empresaId}_logo.${ext}`
+
+  const filePath = path.join(uploadDir, fileName)
+  await writeFile(filePath, buffer)
+
+  const url = `/uploads/logos/${fileName}`
+
+  const empresa = await prisma.empresa.update({
+    where: { id: empresaId },
+    data: { logo: url },
+  })
+
+  revalidatePath("/configuracion")
+  revalidatePath("/")
+  return empresa
+}
+
+export async function removeLogo() {
+  const { empresaId, userId } = await verifySession()
+  await verificarPermiso(userId, { recurso: "empresa", accion: "UPDATE" })
+
+  const empresa = await prisma.empresa.findUnique({ where: { id: empresaId }, select: { logo: true } })
+  if (empresa?.logo) {
+    const filePath = path.join(process.cwd(), "public", empresa.logo)
+    await unlink(filePath).catch(() => {})
+  }
+
+  await prisma.empresa.update({
+    where: { id: empresaId },
+    data: { logo: null },
+  })
+
+  revalidatePath("/configuracion")
+  revalidatePath("/")
 }
 
 // ─── Departamentos ────────────────────────────────────────
@@ -98,7 +145,7 @@ export async function getUsuarios() {
   const { empresaId, userId } = await verifySession()
   await verificarPermiso(userId, { recurso: "usuario", accion: "READ" })
   return prisma.usuario.findMany({
-    where: { empresaId },
+    where: { empresaId, superAdmin: false },
     include: {
       departamento: { select: { id: true, nombre: true } },
       roles: { include: { rol: { select: { id: true, nombre: true } } } },
@@ -347,21 +394,32 @@ export async function updateRolPermisos(rolId: string, permisoIds: string[]) {
   const rol = await prisma.rol.findFirst({ where: { id: rolId, empresaId } })
   if (!rol) throw new Error("Rol no encontrado")
 
+  let finalIds = permisoIds
+
   if (!superAdmin) {
     const corePermisos = await prisma.permiso.findMany({
-      where: { modulo: "CORE", id: { in: permisoIds } },
+      where: { modulo: "CORE" },
+      select: { id: true },
     })
-    if (corePermisos.length > 0) {
-      throw new Error("Solo el super administrador puede asignar permisos del módulo CORE")
-    }
+    const coreIds = new Set(corePermisos.map((p) => p.id))
+
+    const existingCoreIds = await prisma.rolPermiso.findMany({
+      where: { rolId, permisoId: { in: [...coreIds] } },
+      select: { permisoId: true },
+    })
+
+    finalIds = [
+      ...permisoIds.filter((id) => !coreIds.has(id)),
+      ...existingCoreIds.map((rp) => rp.permisoId),
+    ]
   }
 
-  await prisma.$transaction([
-    prisma.rolPermiso.deleteMany({ where: { rolId } }),
-    prisma.rolPermiso.createMany({
-      data: permisoIds.map((permisoId) => ({ rolId, permisoId })),
-    }),
-  ])
+  await prisma.$transaction(async (tx: any) => {
+    await tx.rolPermiso.deleteMany({ where: { rolId } })
+    await tx.rolPermiso.createMany({
+      data: finalIds.map((permisoId) => ({ rolId, permisoId })),
+    })
+  })
 
   revalidatePath("/configuracion")
 }

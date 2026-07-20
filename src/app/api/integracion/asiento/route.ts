@@ -1,17 +1,32 @@
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
+import { auth } from "@/lib/auth"
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await auth()
+    if (!session?.user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
+    }
+
+    const sessionUser = session.user as any
+    const sessionEmpresaId = sessionUser?.empresaId as string | undefined
+
     const body = await req.json()
     const { empresaId, apiKey } = body
 
-    if (!empresaId) {
+    const targetEmpresaId = empresaId || sessionEmpresaId
+    if (!targetEmpresaId) {
       return NextResponse.json({ error: "empresaId requerido" }, { status: 400 })
     }
 
+    // Verificar que el usuario pertenece a la empresa objetivo
+    if (!sessionUser?.superAdmin && targetEmpresaId !== sessionEmpresaId) {
+      return NextResponse.json({ error: "No autorizado para esta empresa" }, { status: 403 })
+    }
+
     const empresa = await prisma.empresa.findUnique({
-      where: { id: empresaId },
+      where: { id: targetEmpresaId },
       include: { tipoContabilidadConfig: true },
     })
 
@@ -22,8 +37,11 @@ export async function POST(req: NextRequest) {
     const config = empresa.tipoContabilidadConfig
     if (config?.config && typeof config.config === "object") {
       const cfg = config.config as Record<string, unknown>
-      if (cfg.apiKey && cfg.apiKey !== apiKey) {
-        return NextResponse.json({ error: "API key inválida" }, { status: 401 })
+      // Si la empresa tiene configurada una API key, exigirla
+      if (cfg.apiKey) {
+        if (!apiKey || cfg.apiKey !== apiKey) {
+          return NextResponse.json({ error: "API key inválida o requerida" }, { status: 401 })
+        }
       }
     }
 
@@ -32,11 +50,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "asiento.detalles requerido" }, { status: 400 })
     }
 
-    const numero = await getNextNumero(empresaId)
+    const numero = await getNextNumero(targetEmpresaId)
 
     const created = await prisma.asientoContable.create({
       data: {
-        empresaId,
+        empresaId: targetEmpresaId,
         numero,
         fecha: asiento.fecha ? new Date(asiento.fecha) : new Date(),
         concepto: asiento.concepto ?? "Importado vía API",

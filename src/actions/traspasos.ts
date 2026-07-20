@@ -6,6 +6,7 @@ import { verificarPermiso } from "@/lib/permisos"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { notificarPorPermiso } from "./notificaciones"
+import { AutomationService } from "@/lib/automation-service"
 
 async function registrarHistorial(params: {
   empresaId: string
@@ -176,12 +177,21 @@ export async function updateTraspaso(id: string, data: TraspasoFormData) {
   return traspaso
 }
 
+const TRANSICIONES_TRASPASO: Record<string, string[]> = {
+  BORRADOR: ["EN_TRANSITO", "COMPLETADO"],
+  EN_TRANSITO: ["COMPLETADO", "CANCELADO"],
+}
+
 export async function cambiarEstadoTraspaso(id: string, estado: string) {
   const { empresaId, userId } = await verifySession()
   await verificarPermiso(userId, { recurso: "traspaso", accion: "UPDATE" })
   const traspaso = await prisma.traspaso.findFirst({ where: { id, empresaId } })
   if (!traspaso) throw new Error("Traspaso no encontrado")
   const estadoAnterior = traspaso.estado
+  const permitidos = TRANSICIONES_TRASPASO[estadoAnterior]
+  if (!permitidos || !permitidos.includes(estado)) {
+    throw new Error(`No se puede cambiar de ${estadoAnterior} a ${estado}`)
+  }
   await prisma.traspaso.update({ where: { id }, data: { estado: estado as any } })
 
   await registrarHistorial({
@@ -217,20 +227,34 @@ export async function completarTraspaso(id: string) {
     include: { items: true },
   })
   if (!traspaso) throw new Error("Traspaso no encontrado")
-  if (traspaso.estado !== "BORRADOR" && traspaso.estado !== "EN_TRANSITO") {
-    throw new Error("El traspaso no puede ser completado")
+  const permitidos = TRANSICIONES_TRASPASO[traspaso.estado]
+  if (!permitidos || !permitidos.includes("COMPLETADO")) {
+    throw new Error(`El traspaso en estado ${traspaso.estado} no puede ser completado`)
   }
 
-  // Create inventory movements for each item
+  // Validar stock suficiente antes de ejecutar
   for (const item of traspaso.items) {
-    // Find matching products by description
-    const productos = await prisma.producto.findMany({
-      where: { empresaId, nombre: { contains: item.descripcion } },
+    const producto = await prisma.producto.findFirst({
+      where: { id: item.descripcion, empresaId },
     })
+    if (!producto) throw new Error(`Producto "${item.descripcion}" no encontrado`)
 
-    for (const producto of productos) {
-      // Salida del almacén origen
-      await prisma.movimientoInventario.create({
+    const stockOrigen = await prisma.inventarioStock.findFirst({
+      where: { productoId: producto.id, almacenId: traspaso.almacenOrigenId },
+    })
+    if (!stockOrigen || Number(stockOrigen.cantidad) < Number(item.cantidad)) {
+      throw new Error(`Stock insuficiente para "${producto.nombre}" en almacén origen. Disponible: ${stockOrigen ? Number(stockOrigen.cantidad) : 0}, requerido: ${Number(item.cantidad)}`)
+    }
+  }
+
+  await prisma.$transaction(async (tx: any) => {
+    for (const item of traspaso.items) {
+      const producto = await tx.producto.findFirst({
+        where: { id: item.descripcion, empresaId },
+      })
+      if (!producto) throw new Error(`Producto "${item.descripcion}" no encontrado`)
+
+      await tx.movimientoInventario.create({
         data: {
           empresaId,
           productoId: producto.id,
@@ -242,8 +266,7 @@ export async function completarTraspaso(id: string) {
         },
       })
 
-      // Entrada al almacén destino
-      await prisma.movimientoInventario.create({
+      await tx.movimientoInventario.create({
         data: {
           empresaId,
           productoId: producto.id,
@@ -255,19 +278,18 @@ export async function completarTraspaso(id: string) {
         },
       })
 
-      // Update stock: remove from origin
-      const stockOrigen = await prisma.inventarioStock.findFirst({
+      const stockOrigen = await tx.inventarioStock.findFirst({
         where: { productoId: producto.id, almacenId: traspaso.almacenOrigenId },
       })
-      if (stockOrigen) {
-        await prisma.inventarioStock.update({
-          where: { id: stockOrigen.id },
-          data: { cantidad: { decrement: item.cantidad } },
-        })
+      if (!stockOrigen || Number(stockOrigen.cantidad) < Number(item.cantidad)) {
+        throw new Error(`Stock insuficiente para "${producto.nombre}"`)
       }
+      await tx.inventarioStock.update({
+        where: { id: stockOrigen.id },
+        data: { cantidad: { decrement: item.cantidad } },
+      })
 
-      // Update stock: add to destination
-      const stockDestino = await prisma.inventarioStock.upsert({
+      await tx.inventarioStock.upsert({
         where: {
           productoId_almacenId: {
             productoId: producto.id,
@@ -285,9 +307,9 @@ export async function completarTraspaso(id: string) {
         },
       })
     }
-  }
 
-  await prisma.traspaso.update({ where: { id }, data: { estado: "COMPLETADO" } })
+    await tx.traspaso.update({ where: { id }, data: { estado: "COMPLETADO" } })
+  })
 
   await registrarHistorial({
     empresaId,
@@ -298,6 +320,14 @@ export async function completarTraspaso(id: string) {
     descripcion: "Traspaso completado con movimientos de inventario",
     usuarioId: userId,
   })
+
+  AutomationService.ejecutarEvento({
+    empresaId,
+    codigoEvento: "TRASPASO_COMPLETADO",
+    entidadTipo: "TRASPASO",
+    entidadId: id,
+    usuarioId: userId,
+  }).catch(() => {})
 
   notificarPorPermiso({
     empresaId,

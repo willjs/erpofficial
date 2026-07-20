@@ -33,6 +33,7 @@ async function getBaseValues(evento: EventoContable, referenciaId: string): Prom
         include: { ordenCompra: { include: { proveedor: true } } },
       })
       if (!cp) throw new Error(`CuentaPagar ${referenciaId} no encontrada`)
+      if (!cp.ordenCompra) throw new Error(`CuentaPagar ${referenciaId} no tiene orden de compra asociada`)
       const valor = Number(cp.valor)
       const iva = Number(cp.ordenCompra.iva)
       return {
@@ -53,6 +54,7 @@ async function getBaseValues(evento: EventoContable, referenciaId: string): Prom
         include: { proveedor: true, cuentaPagar: { include: { ordenCompra: true } } },
       })
       if (!pago) throw new Error(`Pago ${referenciaId} no encontrado`)
+      if (!pago.cuentaPagar.ordenCompra) throw new Error(`Pago ${referenciaId} no tiene orden de compra asociada`)
       return {
         empresaId: pago.empresaId,
         valorFactura: Number(pago.valor),
@@ -113,6 +115,7 @@ async function getBaseValues(evento: EventoContable, referenciaId: string): Prom
         include: { ordenCompra: { include: { proveedor: true } } },
       })
       if (!cpDebito) throw new Error(`CuentaPagar ${referenciaId} no encontrada para Nota Débito`)
+      if (!cpDebito.ordenCompra) throw new Error(`CuentaPagar ${referenciaId} no tiene orden de compra`)
       const valor = Number(cpDebito.valor)
       return {
         empresaId: cpDebito.empresaId,
@@ -132,6 +135,7 @@ async function getBaseValues(evento: EventoContable, referenciaId: string): Prom
         include: { ordenCompra: { include: { proveedor: true } } },
       })
       if (!cpCredito) throw new Error(`CuentaPagar ${referenciaId} no encontrada para Nota Crédito`)
+      if (!cpCredito.ordenCompra) throw new Error(`CuentaPagar ${referenciaId} no tiene orden de compra`)
       const valor = Number(cpCredito.valor)
       return {
         empresaId: cpCredito.empresaId,
