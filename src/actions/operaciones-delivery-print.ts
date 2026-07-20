@@ -35,6 +35,6 @@ export async function getDeliveryTicketPrint(id: string) {
 
   return {
     dt: serializar(dt) as any,
-    empresa: empresa ? { ...empresa, logo: empresa.logo ?? "/images/fuel_logo.png" } : null,
+    empresa: empresa ? { ...empresa, logo: empresa.logo ?? "/images/orbys_logo.png" } : null,
   }
 }

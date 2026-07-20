@@ -220,10 +220,10 @@ export function Sidebar({
       >
         <div className="flex items-center justify-between px-4 py-5 lg:justify-center">
           <img
-            src={empresaLogo || "/images/fuel_logo.png"}
+            src={empresaLogo || "/images/orbys_logo.png"}
             alt="Logo"
             style={{ width: "72px", height: "auto" }}
-            onError={(e) => { (e.target as HTMLImageElement).src = "/images/fuel_logo.png" }}
+            onError={(e) => { (e.target as HTMLImageElement).src = "/images/orbys_logo.png" }}
           />
           <button onClick={close} className="lg:hidden text-muted-foreground hover:text-foreground">
             <X className="h-5 w-5" />

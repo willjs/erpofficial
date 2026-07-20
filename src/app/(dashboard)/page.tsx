@@ -14,7 +14,7 @@ import { useDashboardPermiso } from "@/components/dashboard-permiso-provider"
 
 // ─── Dashboard Minimalista ─────────────────────────────
 function DashboardMinimalista() {
-  const [logo, setLogo] = useState("/images/fuel_logo.png")
+  const [logo, setLogo] = useState("/images/orbys_logo.png")
 
   useEffect(() => {
     getEmpresa().then((emp) => {
@@ -28,7 +28,7 @@ function DashboardMinimalista() {
         src={logo}
         alt="Logo"
         className="w-64 sm:w-72 md:w-80 h-auto select-none"
-        onError={(e) => { (e.target as HTMLImageElement).src = "/images/fuel_logo.png" }}
+        onError={(e) => { (e.target as HTMLImageElement).src = "/images/orbys_logo.png" }}
       />
     </div>
   )

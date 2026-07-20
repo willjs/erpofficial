@@ -23,7 +23,7 @@ export default function LoginPage() {
   )
   const [empresas, setEmpresas] = useState<EmpresaPublic[]>([])
   const [empresaSeleccionada, setEmpresaSeleccionada] = useState<string>("")
-  const [logoActual, setLogoActual] = useState<string>("/images/fuel_logo.png")
+  const [logoActual, setLogoActual] = useState<string>("/images/orbys_logo.png")
 
   useEffect(() => {
     fetch("/api/empresas/public")
@@ -44,7 +44,7 @@ export default function LoginPage() {
     if (emp?.logo) {
       setLogoActual(emp.logo)
     } else {
-      setLogoActual("/images/fuel_logo.png")
+      setLogoActual("/images/orbys_logo.png")
     }
   }
 
@@ -57,7 +57,7 @@ export default function LoginPage() {
             alt="Logo"
             className="mx-auto mb-2"
             style={{ width: "72px", height: "auto" }}
-            onError={(e) => { (e.target as HTMLImageElement).src = "/images/fuel_logo.png" }}
+            onError={(e) => { (e.target as HTMLImageElement).src = "/images/orbys_logo.png" }}
           />
           <CardDescription>Inicia sesión para acceder al sistema</CardDescription>
         </CardHeader>

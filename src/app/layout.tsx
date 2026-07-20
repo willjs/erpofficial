@@ -3,15 +3,13 @@ import { SessionProvider } from "next-auth/react"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "C.I. International Fuels",
+  title: "Orbys",
   description: "Sistema de gestión empresarial",
   icons: {
     icon: [
-      { url: "/images/favicon.ico", sizes: "any" },
-      { url: "/images/favicon-32x32.png", sizes: "32x32", type: "image/png" },
-      { url: "/images/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/images/orbys_logo.png", sizes: "any", type: "image/png" },
     ],
-    apple: "/images/favicon-32x32.png",
+    apple: "/images/orbys_logo.png",
   },
 }
 
