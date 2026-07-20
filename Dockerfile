@@ -28,10 +28,12 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Copy Prisma client for runtime queries
+# Copy Prisma client and runtime deps for queries/auth
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/mariadb ./node_modules/mariadb
+COPY --from=builder /app/node_modules/bcryptjs ./node_modules/bcryptjs
+COPY --from=builder /app/node_modules/bcrypt ./node_modules/bcrypt
 
 RUN chown -R nextjs:nodejs /app
 USER nextjs
