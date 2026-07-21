@@ -1,12 +1,12 @@
-# === Stage 1: Install dependencies ===
+# === Stage 1: Production dependencies ===
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY prisma ./prisma
 RUN npm ci --omit=dev
 
 # === Stage 2: Build ===
 FROM node:22-alpine AS builder
-ARG CACHE_BUST=1
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
@@ -29,13 +29,9 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Copy Prisma client, schema and runtime deps
+# Copy Prisma schema and all production deps
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/mariadb ./node_modules/mariadb
-COPY --from=builder /app/node_modules/denque ./node_modules/denque
-COPY --from=builder /app/node_modules/bcryptjs ./node_modules/bcryptjs
+COPY --from=deps /app/node_modules ./node_modules
 
 # Install prisma CLI globally for runtime schema push
 RUN npm install -g prisma
