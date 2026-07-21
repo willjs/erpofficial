@@ -2,14 +2,16 @@ import { PrismaClient, Modulo, TipoPermisoAcceso } from "@prisma/client"
 import { PrismaMariaDb } from "@prisma/adapter-mariadb"
 import bcrypt from "bcryptjs"
 
+const dbUrl = new URL(process.env.DATABASE_URL ?? "mysql://root:@localhost:3306/oficina_db")
+
 const prisma = new PrismaClient({
   adapter: new PrismaMariaDb({
-    host: "localhost",
-    port: 3306,
-    user: "root",
-    password: "",
-    database: "oficina_db",
-  }),
+    host: dbUrl.hostname,
+    port: parseInt(dbUrl.port) || 3306,
+    user: decodeURIComponent(dbUrl.username),
+    password: decodeURIComponent(dbUrl.password),
+    database: dbUrl.pathname.replace(/^\//, ""),
+  } as any),
 })
 
 const recursosPorModulo: Record<Modulo, string[]> = {
