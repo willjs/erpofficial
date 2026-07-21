@@ -34,6 +34,7 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/mariadb ./node_modules/mariadb
+COPY --from=builder /app/node_modules/denque ./node_modules/denque
 COPY --from=builder /app/node_modules/bcryptjs ./node_modules/bcryptjs
 
 # Install prisma CLI globally for runtime schema push
