@@ -29,17 +29,15 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Copy Prisma client, schema, CLI and runtime deps
+# Copy Prisma client, schema and runtime deps
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/node_modules/mariadb ./node_modules/mariadb
 COPY --from=builder /app/node_modules/bcryptjs ./node_modules/bcryptjs
 
-# Create .bin symlink for prisma CLI
-RUN mkdir -p node_modules/.bin && \
-    ln -sf ../prisma/build/index.js node_modules/.bin/prisma
+# Install prisma CLI globally for runtime schema push
+RUN npm install -g prisma
 
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
