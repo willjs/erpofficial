@@ -81,6 +81,14 @@ export default function PedidosPage() {
   const [productos, setProductos] = useState<any[]>([])
   const [formItems, setFormItems] = useState<any[]>([{ productoId: "none", tipoItem: "PRODUCTO", descripcion: "", unidadMedida: "UNIDAD", cantidad: 1, precioUnitario: 0, descuento: 0, subtotal: 0, impuesto: 0, total: 0 }])
 
+  // ─── Product picker popup ──────────────────────────
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerSearch, setPickerSearch] = useState("")
+  const [pickerTipo, setPickerTipo] = useState<"PRODUCTO" | "SERVICIO">("PRODUCTO")
+  const [pickerCantidad, setPickerCantidad] = useState(1)
+  const [pickerDescuento, setPickerDescuento] = useState(0)
+  const [pickerSelected, setPickerSelected] = useState<any>(null)
+
   const loadPedidos = useCallback(async () => {
     setLoading(true)
     try {
@@ -139,8 +147,54 @@ export default function PedidosPage() {
   }
 
   const addItem = () => {
-    setFormItems([...formItems, { productoId: "none", tipoItem: "PRODUCTO", descripcion: "", unidadMedida: "UNIDAD", cantidad: 1, precioUnitario: 0, descuento: 0, subtotal: 0, impuesto: 0, total: 0 }])
+    setPickerSearch("")
+    setPickerTipo("PRODUCTO")
+    setPickerCantidad(1)
+    setPickerDescuento(0)
+    setPickerSelected(null)
+    setPickerOpen(true)
   }
+
+  const confirmPickerItem = () => {
+    if (pickerTipo === "SERVICIO") {
+      const newItem = {
+        productoId: "none",
+        tipoItem: "SERVICIO",
+        descripcion: "",
+        unidadMedida: "UNIDAD",
+        cantidad: pickerCantidad,
+        precioUnitario: 0,
+        descuento: pickerDescuento,
+        subtotal: 0,
+        impuesto: 0,
+        total: 0,
+      }
+      setFormItems(recalcItem([...formItems, newItem]))
+    } else if (pickerSelected) {
+      const newItem = {
+        productoId: pickerSelected.id,
+        tipoItem: "PRODUCTO",
+        descripcion: pickerSelected.nombre,
+        unidadMedida: pickerSelected.unidadMedida || "UNIDAD",
+        cantidad: pickerCantidad,
+        precioUnitario: pickerSelected.precioUnitario || 0,
+        descuento: pickerDescuento,
+        subtotal: 0,
+        impuesto: 0,
+        total: 0,
+      }
+      setFormItems(recalcItem([...formItems, newItem]))
+    }
+    setPickerOpen(false)
+  }
+
+  const filteredProductos = useMemo(() => {
+    if (!pickerSearch) return productos
+    const q = pickerSearch.toLowerCase()
+    return productos.filter(
+      (p) => p.codigo?.toLowerCase().includes(q) || p.nombre?.toLowerCase().includes(q)
+    )
+  }, [productos, pickerSearch])
 
   const removeItem = (i: number) => {
     if (formItems.length <= 1) return
@@ -549,6 +603,142 @@ export default function PedidosPage() {
             <Button variant="destructive" disabled={deleteLoading} onClick={handleDelete}>
               {deleteLoading ? "Eliminando..." : "Eliminar"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ PRODUCT PICKER POPUP ═══ */}
+      <Dialog open={pickerOpen} onOpenChange={(o) => { setPickerOpen(o); if (!o) setPickerSelected(null) }}>
+        <DialogContent className="sm:max-w-[550px] max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Agregar Item al Pedido</DialogTitle>
+            <DialogDescription>Selecciona un producto del catálogo o agrega un servicio manualmente.</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
+            {/* Tipo de item */}
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={pickerTipo === "PRODUCTO" ? "default" : "outline"}
+                size="sm"
+                onClick={() => { setPickerTipo("PRODUCTO"); setPickerSelected(null); setPickerSearch("") }}
+                className="flex-1"
+              >
+                Producto del catálogo
+              </Button>
+              <Button
+                type="button"
+                variant={pickerTipo === "SERVICIO" ? "default" : "outline"}
+                size="sm"
+                onClick={() => { setPickerTipo("SERVICIO"); setPickerSelected(null) }}
+                className="flex-1"
+              >
+                Servicio
+              </Button>
+            </div>
+
+            {/* Buscador de productos */}
+            {pickerTipo === "PRODUCTO" && (
+              <>
+                <Input
+                  placeholder="Buscar por código o nombre..."
+                  value={pickerSearch}
+                  onChange={(e) => { setPickerSearch(e.target.value); setPickerSelected(null) }}
+                  autoFocus
+                />
+                <div className="border rounded-md overflow-y-auto max-h-[300px] flex-1">
+                  {filteredProductos.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground text-sm">
+                      No se encontraron productos
+                    </div>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-background">
+                        <tr className="border-b text-muted-foreground">
+                          <th className="text-left py-2 px-3">Código</th>
+                          <th className="text-left py-2 px-3">Nombre</th>
+                          <th className="text-left py-2 px-3">UM</th>
+                          <th className="text-right py-2 px-3">Precio</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredProductos.map((p) => (
+                          <tr
+                            key={p.id}
+                            className={`border-b cursor-pointer transition-colors ${
+                              pickerSelected?.id === p.id
+                                ? "bg-primary/10 border-primary"
+                                : "hover:bg-muted/50"
+                            }`}
+                            onClick={() => setPickerSelected(p)}
+                          >
+                            <td className="py-2 px-3 font-mono text-xs">{p.codigo}</td>
+                            <td className="py-2 px-3">{p.nombre}</td>
+                            <td className="py-2 px-3 text-muted-foreground">{p.unidadMedida}</td>
+                            <td className="py-2 px-3 text-right font-mono">{formatMoney(p.precioUnitario)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Info del servicio */}
+            {pickerTipo === "SERVICIO" && (
+              <div className="bg-muted/50 rounded-md p-4 text-sm text-muted-foreground">
+                Se agregará un item tipo servicio. Podrás editar la descripción y el precio directamente en el pedido.
+              </div>
+            )}
+
+            {/* Cantidad y descuento */}
+            <div className="grid grid-cols-2 gap-4 pt-2 border-t">
+              <div className="space-y-1">
+                <Label className="text-xs">Cantidad</Label>
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={pickerCantidad}
+                  onChange={(e) => setPickerCantidad(Number(e.target.value))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Descuento ($)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={pickerDescuento}
+                  onChange={(e) => setPickerDescuento(Number(e.target.value))}
+                />
+              </div>
+            </div>
+
+            {/* Preview del item seleccionado */}
+            {pickerSelected && (
+              <div className="bg-muted/50 rounded-md p-3 text-sm space-y-1">
+                <div className="font-medium">{pickerSelected.nombre}</div>
+                <div className="text-muted-foreground">
+                  Código: <span className="font-mono">{pickerSelected.codigo}</span> | UM: {pickerSelected.unidadMedida} | Precio: {formatMoney(pickerSelected.precioUnitario)}
+                </div>
+              </div>
+            )}
+
+            {/* Botones */}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setPickerOpen(false)}>Cancelar</Button>
+              <Button
+                type="button"
+                onClick={confirmPickerItem}
+                disabled={pickerTipo === "PRODUCTO" && !pickerSelected}
+              >
+                <Plus className="mr-1 h-4 w-4" />
+                Agregar al pedido
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

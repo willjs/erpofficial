@@ -55,6 +55,9 @@ type Cotizacion = { id: string; requisicionId: string; requisicion?: { id: strin
 type OCItem = { id: string; item: number; descripcion: string; unidadMedida: string; cantidad: number; valorUnitario: number; valorTotal: number; tipoIva?: string }
 type OrdenCompra = { id: string; numero: number; fecha: string; proveedor: Proveedor; requisicion: { id: string; numero: number }; valorTotal: number; estado: string; items: OCItem[]; _count?: { recepciones: number; cuentasPagar: number } }
 
+type RecepcionItem = { id: string; item: number; descripcion: string; cantidadRecibida: number; observaciones: string | null }
+type Recepcion = { id: string; ordenCompraId: string; ordenCompra: { id: string; numero: number; proveedor: Proveedor; items: OCItem[] }; remision: string | null; observaciones: string | null; estado: string; fechaRecepcion: string; items: RecepcionItem[] }
+
 const PRIORIDAD_STYLES: Record<string, "default" | "warning" | "destructive"> = { NORMAL: "default", URGENTE: "warning", EMERGENCIA: "destructive" }
 const ESTADO_REQ_STYLES: Record<string, string> = { BORRADOR: "secondary", EN_COTIZACION: "default", ORDEN_COMPRA_GENERADA: "info", CERRADA: "default" }
 const ESTADO_OC_STYLES: Record<string, "secondary" | "success" | "warning" | "info"> = { EMITIDA: "info", RECIBIDA: "success", FACTURADA: "warning", CERRADA: "secondary" }
@@ -122,6 +125,16 @@ export default function ComprasPage() {
   const [ocLinkData, setOcLinkData] = useState<Record<string, { token: string; url: string }>>({})
   const [ocGenerandoLink, setOcGenerandoLink] = useState<string | null>(null)
 
+  // ─── Recepciones ────────────────────────────────────
+  const [recepciones, setRecepciones] = useState<Recepcion[]>([])
+  const [recLoading, setRecLoading] = useState(true)
+  const [recSearch, setRecSearch] = useState("")
+  const [recDialogOpen, setRecDialogOpen] = useState(false)
+  const [recEditId, setRecEditId] = useState<string | null>(null)
+  const [recForm, setRecForm] = useState({ ordenCompraId: "", remision: "", observaciones: "", items: [{ item: 1, descripcion: "", cantidadRecibida: 0, observaciones: "" }] })
+  const [recSaving, setRecSaving] = useState(false)
+  const [recDetailId, setRecDetailId] = useState<string | null>(null)
+
   // ─── Centros Costos CRUD ───────────────────────────
   const [ccDialogOpen, setCcDialogOpen] = useState(false)
   const [ccEditId, setCcEditId] = useState<string | null>(null)
@@ -168,13 +181,23 @@ export default function ComprasPage() {
     } finally { setOcLoading(false) }
   }, [])
 
+  const loadRecepciones = useCallback(async () => {
+    setRecLoading(true)
+    try {
+      const { getRecepciones } = await import("@/actions/compras")
+      const data = await getRecepciones()
+      setRecepciones(data as Recepcion[])
+    } finally { setRecLoading(false) }
+  }, [])
+
   const loadAll = useCallback(() => {
     loadCentrosCostos()
     loadProveedores()
     loadRequisiciones()
     loadCotizaciones()
     loadOrdenes()
-  }, [loadCentrosCostos, loadProveedores, loadRequisiciones, loadCotizaciones, loadOrdenes])
+    loadRecepciones()
+  }, [loadCentrosCostos, loadProveedores, loadRequisiciones, loadCotizaciones, loadOrdenes, loadRecepciones])
 
   useEffect(() => { loadAll() }, [loadAll])
 
@@ -835,6 +858,107 @@ export default function ComprasPage() {
   }
 
   // ════════════════════════════════════════════════════════
+  // RECEPCIONES
+  // ════════════════════════════════════════════════════════
+
+  const ESTADO_REC_STYLES: Record<string, "success" | "warning" | "secondary"> = { COMPLETA: "success", PARCIAL: "warning", PENDIENTE: "secondary" }
+
+  function openRecCreate() {
+    setRecEditId(null)
+    setRecForm({ ordenCompraId: "", remision: "", observaciones: "", items: [{ item: 1, descripcion: "", cantidadRecibida: 0, observaciones: "" }] })
+    setRecDialogOpen(true)
+  }
+
+  function openRecEdit(rec: Recepcion) {
+    setRecEditId(rec.id)
+    setRecForm({
+      ordenCompraId: rec.ordenCompraId,
+      remision: rec.remision ?? "",
+      observaciones: rec.observaciones ?? "",
+      items: rec.items.map(i => ({ item: i.item, descripcion: i.descripcion, cantidadRecibida: i.cantidadRecibida, observaciones: i.observaciones ?? "" })),
+    })
+    setRecDialogOpen(true)
+  }
+
+  function addRecItem() {
+    setRecForm(p => ({ ...p, items: [...p.items, { item: p.items.length + 1, descripcion: "", cantidadRecibida: 0, observaciones: "" }] }))
+  }
+
+  function removeRecItem(idx: number) {
+    setRecForm(p => ({ ...p, items: p.items.filter((_, i) => i !== idx).map((it, i) => ({ ...it, item: i + 1 })) }))
+  }
+
+  function updateRecItem(idx: number, field: string, value: any) {
+    setRecForm(p => ({ ...p, items: p.items.map((it, i) => i === idx ? { ...it, [field]: value } : it) }))
+  }
+
+  function autoFillRecItems(ocId: string) {
+    const oc = ordenes.find(o => o.id === ocId)
+    if (!oc) return
+    setRecForm(p => ({
+      ...p,
+      ordenCompraId: ocId,
+      items: oc.items.map(i => ({ item: i.item, descripcion: i.descripcion, cantidadRecibida: Number(i.cantidad), observaciones: "" })),
+    }))
+  }
+
+  async function handleRecSave(e: React.FormEvent) {
+    e.preventDefault()
+    setRecSaving(true)
+    try {
+      const { createRecepcion, updateRecepcion } = await import("@/actions/compras")
+      if (recEditId) {
+        await updateRecepcion(recEditId, recForm as any)
+        toast({ title: "Recepción actualizada", variant: "success" })
+      } else {
+        await createRecepcion(recForm as any)
+        toast({ title: "Recepción registrada — stock y contabilidad actualizados", variant: "success" })
+      }
+      setRecDialogOpen(false)
+      await loadRecepciones()
+      await loadOrdenes()
+    } catch (err: any) {
+      toast({ title: "Error al guardar recepción", description: err?.message, variant: "destructive" })
+    } finally { setRecSaving(false) }
+  }
+
+  async function handleRecDelete(id: string) {
+    if (!confirm("¿Eliminar esta recepción?")) return
+    try {
+      const { deleteRecepcion } = await import("@/actions/compras")
+      await deleteRecepcion(id)
+      await loadRecepciones()
+      toast({ title: "Recepción eliminada", variant: "success" })
+    } catch (err: any) {
+      toast({ title: "Error al eliminar", description: err?.message, variant: "destructive" })
+    }
+  }
+
+  const filteredRec = recSearch ? recepciones.filter(r => {
+    const q = recSearch.toLowerCase()
+    return String(r.ordenCompra?.numero).includes(q) || r.ordenCompra?.proveedor?.razonSocial?.toLowerCase().includes(q) || r.estado.toLowerCase().includes(q) || (r.remision ?? "").toLowerCase().includes(q)
+  }) : recepciones
+
+  const recColumns: Column<Recepcion>[] = [
+    { key: "ordenCompra", header: "OC", render: (r) => <span className="font-mono">#{r.ordenCompra?.numero}</span> },
+    { key: "proveedor", header: "Proveedor", render: (r) => r.ordenCompra?.proveedor?.razonSocial ?? "—" },
+    { key: "remision", header: "Remisión", render: (r) => r.remision ?? "—" },
+    { key: "fechaRecepcion", header: "Fecha", render: (r) => formatDate(r.fechaRecepcion) },
+    { key: "items", header: "Items", render: (r) => r.items.length },
+    { key: "estado", header: "Estado", render: (r) => <Badge variant={(ESTADO_REC_STYLES as any)[r.estado] ?? "default"}>{r.estado}</Badge> },
+    {
+      key: "acciones", header: "", className: "w-[100px] text-right",
+      render: (r) => (
+        <div className="flex justify-end gap-1">
+          <Button variant="ghost" size="icon" title="Ver detalle" onClick={() => setRecDetailId(r.id)}><Eye className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" title="Editar" onClick={() => openRecEdit(r)}><Pencil className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" title="Eliminar" onClick={() => handleRecDelete(r.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+        </div>
+      ),
+    },
+  ]
+
+  // ════════════════════════════════════════════════════════
   // CENTROS COSTOS CRUD
   // ════════════════════════════════════════════════════════
   function openCCCreate() {
@@ -988,6 +1112,7 @@ export default function ComprasPage() {
             { value: "requisiciones", label: "Requisiciones", icon: ShoppingCart },
             { value: "cotizaciones", label: "Cotizaciones", icon: DollarSign },
             { value: "ordenes", label: "Órdenes de Compra", icon: FileText },
+            { value: "recepciones", label: "Recepciones", icon: Truck },
             { value: "centros-costos", label: "Centros Costo", icon: Building2 },
           ].map(t => (
             <Tabs.Trigger key={t.value} value={t.value}
@@ -1835,6 +1960,101 @@ export default function ComprasPage() {
                         <span className="font-mono">{formatMoney(total)}</span>
                       </div>
                     </div>
+                  </div>
+                )
+              })()}
+            </div>
+          </FormDialog>
+        </Tabs.Content>
+
+        {/* ═══ RECEPCIONES ═══ */}
+        <Tabs.Content value="recepciones" className="space-y-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+            <Input placeholder="Buscar por OC, proveedor, remisión..." value={recSearch} onChange={(e) => setRecSearch(e.target.value)} className="w-full sm:max-w-sm" />
+            <Button onClick={openRecCreate} className="w-full sm:w-auto"><Plus className="mr-2 h-4 w-4" />Nueva Recepción</Button>
+          </div>
+          <DataTable columns={recColumns} data={filteredRec} loading={recLoading} mobileCardTitle={(r) => <>OC <span className="font-mono">#{r.ordenCompra?.numero}</span> — {r.ordenCompra?.proveedor?.razonSocial}</>} />
+
+          {/* Detalle Recepción */}
+          <Dialog open={recDetailId !== null} onOpenChange={(o) => !o && setRecDetailId(null)}>
+            <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
+              <DialogHeader><DialogTitle>Detalle de Recepción</DialogTitle></DialogHeader>
+              {recDetailId && (() => {
+                const r = recepciones.find(x => x.id === recDetailId)
+                if (!r) return null
+                return (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div><span className="text-muted-foreground">OC No.: </span><span className="font-mono">#{r.ordenCompra?.numero}</span></div>
+                      <div><span className="text-muted-foreground">Proveedor: </span>{r.ordenCompra?.proveedor?.razonSocial}</div>
+                      <div><span className="text-muted-foreground">Remisión: </span>{r.remision ?? "—"}</div>
+                      <div><span className="text-muted-foreground">Fecha: </span>{formatDate(r.fechaRecepcion)}</div>
+                      <div><span className="text-muted-foreground">Estado: </span><Badge variant={(ESTADO_REC_STYLES as any)[r.estado] ?? "default"}>{r.estado}</Badge></div>
+                    </div>
+                    {r.observaciones && <div className="text-sm"><span className="text-muted-foreground">Observaciones: </span>{r.observaciones}</div>}
+                    <Separator />
+                    <table className="w-full text-sm">
+                      <thead><tr className="border-b text-muted-foreground"><th className="text-left py-2">#</th><th className="text-left py-2">Descripción</th><th className="text-right py-2">Cant. Recibida</th><th className="text-left py-2">Observaciones</th></tr></thead>
+                      <tbody>
+                        {r.items.map((i) => (
+                          <tr key={i.id} className="border-b last:border-0">
+                            <td className="py-2">{i.item}</td>
+                            <td className="py-2">{i.descripcion}</td>
+                            <td className="py-2 text-right font-mono">{i.cantidadRecibida}</td>
+                            <td className="py-2">{i.observaciones ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <Separator />
+                    <HistorialEstados entidadTipo="RECEPCION" entidadId={r.id} />
+                  </div>
+                )
+              })()}
+            </DialogContent>
+          </Dialog>
+
+          {/* Formulario Recepción */}
+          <FormDialog open={recDialogOpen} onOpenChange={setRecDialogOpen} title={recEditId ? "Editar Recepción" : "Nueva Recepción"} description="Registra la recepción de mercancía contra una orden de compra" loading={recSaving} onSubmit={handleRecSave as any}>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Orden de Compra *</Label>
+                <Select value={recForm.ordenCompraId} onValueChange={(v) => autoFillRecItems(v)}>
+                  <SelectTrigger><SelectValue placeholder="Seleccionar OC" /></SelectTrigger>
+                  <SelectContent>
+                    {ordenes.filter(o => o.estado !== "CERRADA").map(o => (
+                      <SelectItem key={o.id} value={o.id}>OC #{o.numero} — {o.proveedor?.razonSocial}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2"><Label>Remisión</Label><Input value={recForm.remision} onChange={(e) => setRecForm(p => ({ ...p, remision: e.target.value }))} placeholder="N° de remisión" /></div>
+                <div className="space-y-2"><Label>Observaciones</Label><Input value={recForm.observaciones} onChange={(e) => setRecForm(p => ({ ...p, observaciones: e.target.value }))} /></div>
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between">
+                <Label className="font-medium">Items a recibir</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addRecItem}><Plus className="mr-1 h-3 w-3" />Agregar</Button>
+              </div>
+              <div className="space-y-2">
+                {recForm.items.map((it, idx) => (
+                  <div key={idx} className="grid grid-cols-[auto_1fr_120px_120px_auto] gap-2 items-center">
+                    <span className="text-xs text-muted-foreground font-mono w-6 text-center">{it.item}</span>
+                    <Input value={it.descripcion} onChange={(e) => updateRecItem(idx, "descripcion", e.target.value)} placeholder="Descripción" />
+                    <Input type="number" min="0" value={it.cantidadRecibida || ""} onChange={(e) => updateRecItem(idx, "cantidadRecibida", Number(e.target.value))} placeholder="Cant." />
+                    <Input value={it.observaciones} onChange={(e) => updateRecItem(idx, "observaciones", e.target.value)} placeholder="Obs." />
+                    {recForm.items.length > 1 && <Button type="button" variant="ghost" size="icon" onClick={() => removeRecItem(idx)}><Trash2 className="h-3 w-3 text-destructive" /></Button>}
+                  </div>
+                ))}
+              </div>
+              {recForm.ordenCompraId && (() => {
+                const oc = ordenes.find(o => o.id === recForm.ordenCompraId)
+                if (!oc) return null
+                return (
+                  <div className="bg-muted/50 rounded-md p-3 text-sm space-y-1">
+                    <div className="flex justify-between"><span className="text-muted-foreground">OC Total:</span><span className="font-mono font-medium">{formatMoney(Number(oc.valorTotal))}</span></div>
+                    <div className="text-xs text-muted-foreground">Al recibir, el sistema actualizará automáticamente el inventario y generará el asiento contable.</div>
                   </div>
                 )
               })()}
